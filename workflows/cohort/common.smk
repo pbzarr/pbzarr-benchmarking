@@ -7,6 +7,18 @@
 #   n_samples, samples_file, results (this job's results folder), build,
 #   reference_local (the node-local copy of the reference), and
 #   threads_per_job (D4 and BigWig only).
+#
+# What the driver must also pass to snakemake, because Snakemake schedules by
+# the threads and resources the rules declare:
+#   --cores      at least max(CORES, JOBS * threads_per_job). Each D4 or BigWig
+#                job declares threads_per_job, so with fewer cores fewer than
+#                JOBS jobs run at once. (The guard below checks the CORES part.)
+#   --resources  pack=JOBS bench=1
+#                pack=JOBS caps the number of D4 or BigWig jobs running at
+#                once. bench=1 keeps the timed scans one at a time.
+# The CPUs really available stay at 256: the Slurm step the driver runs
+# snakemake in is pinned to 256 cores. --cores and the thread counts only
+# decide how many jobs Snakemake starts.
 
 import sys
 from pathlib import Path

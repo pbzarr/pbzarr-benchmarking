@@ -94,6 +94,10 @@ trap save_logs EXIT
 
 # Open files: raise the limit as far as it goes, and stop if it is below 4 * N + 256.
 ulimit -n "$(ulimit -Hn)" || true
+# Threads: the scans start many threads (a pool of 256 worker processes, each with
+# threads of its own). Slurm's default limit is 16384 threads per user, and a
+# scan that reaches it hangs. Raise it as far as it goes.
+ulimit -u "$(ulimit -Hu)" || true
 limit=$(ulimit -n)
 if [ "$limit" != unlimited ] && [ "$limit" -lt $((4 * N + 256)) ]; then
     echo "open-file limit $limit is below $((4 * N + 256))" >&2

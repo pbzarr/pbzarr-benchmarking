@@ -4,7 +4,7 @@
 #SBATCH --account=vollger-reserved
 #SBATCH --nodelist=rw244
 #SBATCH --exclusive
-#SBATCH --mem=0
+#SBATCH --mem=1450000M
 #SBATCH --time=1-00:00:00
 #SBATCH --output=results/cohort/logs/part2-%j.log
 
@@ -16,6 +16,9 @@
 # example the smoke test: config/cohort-smoke.yaml and config/packing-smoke.yaml.
 # If the job dies, submit it again: a job without $OUT/DONE starts over, one
 # with it exits.
+# The job asks for 1450000M, not --mem=0: all of rw244's memory (1532000M) is above
+# the account's group limit (1487.5G), so Slurm rejects --mem=0 with AssocGrpMemLimit.
+# --exclusive still gives the job the whole node.
 
 set -euo pipefail
 

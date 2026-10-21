@@ -4,7 +4,7 @@
 #SBATCH --account=vollger-reserved
 #SBATCH --nodelist=rw244
 #SBATCH --exclusive
-#SBATCH --mem=0
+#SBATCH --mem=1450000M
 #SBATCH --time=1-00:00:00
 #SBATCH --output=results/single/logs/part1-%j.log
 
@@ -12,6 +12,9 @@
 # Submit from the repo root, after creating results/single/logs. To run the
 # smoke test instead: CONFIG=config/single-smoke.yaml sbatch workflows/single/part1.sbatch
 # If the job dies, submit it again: runs that already have a result file are skipped.
+# The job asks for 1450000M, not --mem=0: all of rw244's memory (1532000M) is above
+# the account's group limit (1487.5G), so Slurm rejects --mem=0 with AssocGrpMemLimit.
+# --exclusive still gives the job the whole node.
 
 set -euo pipefail
 

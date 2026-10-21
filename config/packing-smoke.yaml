@@ -1,0 +1,1 @@
+{d4: {efficient_threads: 2, efficient_jobs: 100, fastest_threads: 16}, bigwig: {efficient_threads: 1, efficient_jobs: 200, fastest_threads: 1}}

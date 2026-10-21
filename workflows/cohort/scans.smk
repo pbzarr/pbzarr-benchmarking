@@ -194,6 +194,11 @@ rule d4_over10:
         "logs/d4.over10.log"
     shell:
         """
+        # The script runs {threads} worker processes. pyd4 also starts a pool as
+        # large as the node (512 threads) in each one, and 256 of them hit the
+        # per-user thread limit and hang. One thread each leaves the parallelism
+        # to the worker processes.
+        RAYON_NUM_THREADS=1 \
         {params.python:q} {input.timer:q} --data {input.d4:q} --cache cold \
             --trials {params.trials} --output {output.bench:q} --before 'rm -rf {output.out}' -- \
             {params.python:q} {input.script:q} {input.d4:q} {output.out:q} {threads} \

@@ -117,7 +117,9 @@ rule stage_reference:
 #   2. Time the tool. `sync` is inside the timed command, so the time includes
 #      flushing the output to disk. Paths have no spaces, so they are not quoted
 #      inside sh -c '...'.
-#   3. Check that the tool wrote its output.
+#   3. Check that the tool wrote its output. For pbz the store is a folder, so
+#      also require a chunk file in its depth/values array. The sizes are put in
+#      variables first, so that a failing du or find stops the rule.
 #   4. Write the result file: a header and one row.
 #   5. Delete the data.
 
@@ -145,9 +147,14 @@ rule run_pbz:
         mkdir -p {params.data}
         /usr/bin/time -f '%e\t%U\t%S\t%M' -o {params.data}/time.txt sh -c '{params.pbz} import bam {input.cram}:{wildcards.sample} --reference {input.ref} --threads {wildcards.threads} --track depth -c sample --codecs @{input.codecs} --no-progress -o {params.store} && sync'
         test -s {params.store}
+        chunks=$(find {params.store}/depth/values/c -type f | wc -l)
+        test "$chunks" -gt 0
+        bytes=$(du -sb {params.store} | cut -f1)
+        files=$(find {params.store} -type f | wc -l)
+        test "$files" -gt 0
         read wall user sys rss < {params.data}/time.txt
         printf 'tool\tsample\tthreads\trepeat\tcram_bytes\twall_s\tuser_s\tsys_s\tmax_rss_kb\tout_bytes\tout_files\n' > {output:q}
-        printf 'pbz\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' {wildcards.sample} {wildcards.threads} {wildcards.repeat} {params.cram_bytes} "$wall" "$user" "$sys" "$rss" "$(du -sb {params.store} | cut -f1)" "$(find {params.store} -type f | wc -l)" >> {output:q}
+        printf 'pbz\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' {wildcards.sample} {wildcards.threads} {wildcards.repeat} {params.cram_bytes} "$wall" "$user" "$sys" "$rss" "$bytes" "$files" >> {output:q}
         rm -rf {params.data}
         """
 
@@ -175,9 +182,12 @@ rule run_mosdepth:
         mkdir -p {params.data}
         /usr/bin/time -f '%e\t%U\t%S\t%M' -o {params.data}/time.txt sh -c 'mosdepth -t {wildcards.threads} --fasta {input.ref} --d4 {params.prefix} {input.cram} && sync'
         test -s {params.d4}
+        bytes=$(du -sb {params.d4} | cut -f1)
+        files=$(find {params.d4} -type f | wc -l)
+        test "$files" -gt 0
         read wall user sys rss < {params.data}/time.txt
         printf 'tool\tsample\tthreads\trepeat\tcram_bytes\twall_s\tuser_s\tsys_s\tmax_rss_kb\tout_bytes\tout_files\n' > {output:q}
-        printf 'mosdepth\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' {wildcards.sample} {wildcards.threads} {wildcards.repeat} {params.cram_bytes} "$wall" "$user" "$sys" "$rss" "$(du -sb {params.d4} | cut -f1)" "$(find {params.d4} -type f | wc -l)" >> {output:q}
+        printf 'mosdepth\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' {wildcards.sample} {wildcards.threads} {wildcards.repeat} {params.cram_bytes} "$wall" "$user" "$sys" "$rss" "$bytes" "$files" >> {output:q}
         rm -rf {params.data}
         """
 
@@ -205,8 +215,11 @@ rule run_megadepth:
         mkdir -p {params.data}
         /usr/bin/time -f '%e\t%U\t%S\t%M' -o {params.data}/time.txt sh -c 'megadepth {input.cram} --fasta {input.ref} --bigwig --filter-out 1796 --threads {wildcards.threads} --prefix {params.prefix} && sync'
         test -s {params.bigwig}
+        bytes=$(du -sb {params.bigwig} | cut -f1)
+        files=$(find {params.bigwig} -type f | wc -l)
+        test "$files" -gt 0
         read wall user sys rss < {params.data}/time.txt
         printf 'tool\tsample\tthreads\trepeat\tcram_bytes\twall_s\tuser_s\tsys_s\tmax_rss_kb\tout_bytes\tout_files\n' > {output:q}
-        printf 'megadepth\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' {wildcards.sample} {wildcards.threads} {wildcards.repeat} {params.cram_bytes} "$wall" "$user" "$sys" "$rss" "$(du -sb {params.bigwig} | cut -f1)" "$(find {params.bigwig} -type f | wc -l)" >> {output:q}
+        printf 'megadepth\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' {wildcards.sample} {wildcards.threads} {wildcards.repeat} {params.cram_bytes} "$wall" "$user" "$sys" "$rss" "$bytes" "$files" >> {output:q}
         rm -rf {params.data}
         """

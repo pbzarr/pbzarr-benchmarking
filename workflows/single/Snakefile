@@ -1,0 +1,212 @@
+# Part 1: time creating one depth track from one CRAM, for PBZ, mosdepth (D4)
+# and Megadepth (BigWig), at several thread counts. Run it with part1.sbatch.
+#
+# Each run is one timed command. Runs go one at a time (--resources bench=1).
+# Data goes under the working directory (the job's local $TMPDIR) and is deleted
+# after each run. Only the one-row result files go to the results folder.
+
+import csv
+import os
+from itertools import islice
+from pathlib import Path
+
+# Paths in the config file are relative to the repo root (the parent of config/).
+ROOT = Path(workflow.basedir).resolve().parents[1]
+
+
+def from_root(path):
+    path = Path(path).expanduser()
+    return str(path if path.is_absolute() else ROOT / path)
+
+
+MANIFEST = from_root(config["manifest"])
+CRAMS_DIR = from_root(config["crams_dir"])
+REFERENCE = from_root(config["reference"])
+PBZ = from_root(config["pbz"])
+CODECS = from_root(config["codecs"])
+RESULTS = from_root(config["results"])
+EVICT = str(ROOT / "workflows/lib/evict.py")
+REF_LOCAL = "ref/" + Path(REFERENCE).name  # the copy in the working directory
+THREADS = config["threads"]  # {tool: [thread counts]}
+REPEATS = range(1, config["repeats"] + 1)
+
+# Every timed command must really get its thread count.
+if workflow.cores < max(max(counts) for counts in THREADS.values()):
+    raise ValueError("--cores must be at least the largest thread count in the config")
+
+
+def cram_path(sample):
+    return f"{CRAMS_DIR}/{sample}.final.cram"
+
+
+# Pick the samples. Sort the first `first_n` manifest samples by CRAM size (ties
+# broken by manifest order) and take the one at each quantile.
+with open(MANIFEST) as handle:
+    manifest = [row["sample_id"] for row in csv.DictReader(handle, delimiter="\t")]
+by_size = sorted(
+    (os.stat(cram_path(sample)).st_size, order, sample)
+    for order, sample in enumerate(islice(manifest, config["first_n"]))
+)
+picked = [by_size[round(q * (len(by_size) - 1))] for q in config["quantiles"]]
+CRAM_BYTES = {sample: size for size, _, sample in picked}
+
+# One result file per run: tool, sample, threads, repeat.
+ROWS = [
+    f"{RESULTS}/runs/{tool}/{sample}/t{threads}/r{repeat}.tsv"
+    for tool in ("pbz", "mosdepth", "megadepth")
+    for sample in CRAM_BYTES
+    for threads in THREADS[tool]
+    for repeat in REPEATS
+]
+
+# A run whose result file already exists is finished, so a rerun after a crash
+# skips it. Leave it out of the workflow completely. If it stayed in, the fresh
+# copy of the reference would make Snakemake redo it.
+TODO = [row for row in ROWS if not os.path.exists(row)]
+
+wildcard_constraints:
+    sample="[^/]+",
+    threads=r"\d+",
+    repeat=r"\d+",
+
+
+rule all:
+    input:
+        RESULTS + "/runs.tsv",
+        RESULTS + "/samples.tsv",
+
+
+rule samples_table:
+    output:
+        RESULTS + "/samples.tsv"
+    run:
+        with open(output[0], "w") as out:
+            out.write("sample\tcram_bytes\n")
+            for sample, size in CRAM_BYTES.items():
+                out.write(f"{sample}\t{size}\n")
+
+
+# Join all result files, old and new, keeping the header of the first one only.
+# The input is the runs still to do, so this waits for them.
+rule collect:
+    input:
+        TODO
+    output:
+        RESULTS + "/runs.tsv"
+    params:
+        rows=ROWS
+    shell:
+        r"""awk 'FNR == 1 && NR != 1 {{ next }} {{ print }}' {params.rows:q} > {output:q}"""
+
+
+# Copy the reference to the local disk once per job. This is not timed.
+rule stage_reference:
+    input:
+        fasta=REFERENCE,
+        fai=REFERENCE + ".fai"
+    output:
+        fasta=REF_LOCAL,
+        fai=REF_LOCAL + ".fai"
+    shell:
+        "cp {input.fasta:q} {output.fasta:q} && cp {input.fai:q} {output.fai:q}"
+
+
+# The three run rules do the same steps. Only the timed command and the output
+# differ:
+#   1. Drop the CRAM and its index from the page cache, so the read is cold.
+#   2. Time the tool. `sync` is inside the timed command, so the time includes
+#      flushing the output to disk. Paths have no spaces, so they are not quoted
+#      inside sh -c '...'.
+#   3. Check that the tool wrote its output.
+#   4. Write the result file: a header and one row.
+#   5. Delete the data.
+
+rule run_pbz:
+    input:
+        cram=lambda wildcards: cram_path(wildcards.sample),
+        crai=lambda wildcards: cram_path(wildcards.sample) + ".crai",
+        ref=REF_LOCAL,
+        fai=REF_LOCAL + ".fai",
+        codecs=CODECS
+    output:
+        RESULTS + "/runs/pbz/{sample}/t{threads}/r{repeat}.tsv"
+    threads: lambda wildcards: int(wildcards.threads)
+    resources:
+        bench=1
+    params:
+        evict=EVICT,
+        pbz=PBZ,
+        data="data/pbz/{sample}/t{threads}/r{repeat}",
+        store="data/pbz/{sample}/t{threads}/r{repeat}/{sample}.pbz",
+        cram_bytes=lambda wildcards: CRAM_BYTES[wildcards.sample]
+    shell:
+        r"""
+        python {params.evict} {input.cram} {input.crai}
+        mkdir -p {params.data}
+        /usr/bin/time -f '%e\t%U\t%S\t%M' -o {params.data}/time.txt sh -c '{params.pbz} import bam {input.cram}:{wildcards.sample} --reference {input.ref} --threads {wildcards.threads} --track depth -c sample --codecs @{input.codecs} --no-progress -o {params.store} && sync'
+        test -s {params.store}
+        read wall user sys rss < {params.data}/time.txt
+        printf 'tool\tsample\tthreads\trepeat\tcram_bytes\twall_s\tuser_s\tsys_s\tmax_rss_kb\tout_bytes\tout_files\n' > {output:q}
+        printf 'pbz\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' {wildcards.sample} {wildcards.threads} {wildcards.repeat} {params.cram_bytes} "$wall" "$user" "$sys" "$rss" "$(du -sb {params.store} | cut -f1)" "$(find {params.store} -type f | wc -l)" >> {output:q}
+        rm -rf {params.data}
+        """
+
+
+rule run_mosdepth:
+    input:
+        cram=lambda wildcards: cram_path(wildcards.sample),
+        crai=lambda wildcards: cram_path(wildcards.sample) + ".crai",
+        ref=REF_LOCAL,
+        fai=REF_LOCAL + ".fai"
+    output:
+        RESULTS + "/runs/mosdepth/{sample}/t{threads}/r{repeat}.tsv"
+    threads: lambda wildcards: int(wildcards.threads)
+    resources:
+        bench=1
+    params:
+        evict=EVICT,
+        data="data/mosdepth/{sample}/t{threads}/r{repeat}",
+        prefix="data/mosdepth/{sample}/t{threads}/r{repeat}/{sample}",
+        d4="data/mosdepth/{sample}/t{threads}/r{repeat}/{sample}.per-base.d4",
+        cram_bytes=lambda wildcards: CRAM_BYTES[wildcards.sample]
+    shell:
+        r"""
+        python {params.evict} {input.cram} {input.crai}
+        mkdir -p {params.data}
+        /usr/bin/time -f '%e\t%U\t%S\t%M' -o {params.data}/time.txt sh -c 'mosdepth -t {wildcards.threads} --fasta {input.ref} --d4 {params.prefix} {input.cram} && sync'
+        test -s {params.d4}
+        read wall user sys rss < {params.data}/time.txt
+        printf 'tool\tsample\tthreads\trepeat\tcram_bytes\twall_s\tuser_s\tsys_s\tmax_rss_kb\tout_bytes\tout_files\n' > {output:q}
+        printf 'mosdepth\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' {wildcards.sample} {wildcards.threads} {wildcards.repeat} {params.cram_bytes} "$wall" "$user" "$sys" "$rss" "$(du -sb {params.d4} | cut -f1)" "$(find {params.d4} -type f | wc -l)" >> {output:q}
+        rm -rf {params.data}
+        """
+
+
+rule run_megadepth:
+    input:
+        cram=lambda wildcards: cram_path(wildcards.sample),
+        crai=lambda wildcards: cram_path(wildcards.sample) + ".crai",
+        ref=REF_LOCAL,
+        fai=REF_LOCAL + ".fai"
+    output:
+        RESULTS + "/runs/megadepth/{sample}/t{threads}/r{repeat}.tsv"
+    threads: lambda wildcards: int(wildcards.threads)
+    resources:
+        bench=1
+    params:
+        evict=EVICT,
+        data="data/megadepth/{sample}/t{threads}/r{repeat}",
+        prefix="data/megadepth/{sample}/t{threads}/r{repeat}/{sample}",
+        bigwig="data/megadepth/{sample}/t{threads}/r{repeat}/{sample}.all.bw",
+        cram_bytes=lambda wildcards: CRAM_BYTES[wildcards.sample]
+    shell:
+        r"""
+        python {params.evict} {input.cram} {input.crai}
+        mkdir -p {params.data}
+        /usr/bin/time -f '%e\t%U\t%S\t%M' -o {params.data}/time.txt sh -c 'megadepth {input.cram} --fasta {input.ref} --bigwig --filter-out 1796 --threads {wildcards.threads} --prefix {params.prefix} && sync'
+        test -s {params.bigwig}
+        read wall user sys rss < {params.data}/time.txt
+        printf 'tool\tsample\tthreads\trepeat\tcram_bytes\twall_s\tuser_s\tsys_s\tmax_rss_kb\tout_bytes\tout_files\n' > {output:q}
+        printf 'megadepth\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' {wildcards.sample} {wildcards.threads} {wildcards.repeat} {params.cram_bytes} "$wall" "$user" "$sys" "$rss" "$(du -sb {params.bigwig} | cut -f1)" "$(find {params.bigwig} -type f | wc -l)" >> {output:q}
+        rm -rf {params.data}
+        """

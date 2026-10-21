@@ -1,0 +1,12 @@
+manifest: config/1kg-sr.tsv
+crams_dir: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-high-coverage/crams
+reference: /scratch/ucgd/lustre-labs/vollger/assemblies/GRCh38_full_analysis_set_plus_decoy_hla.fa
+chrom_sizes: /scratch/ucgd/lustre-labs/vollger/assemblies/GRCh38_full_analysis_set_plus_decoy_hla.chrom.sizes
+pbz: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr/target/release/pbz
+pbz_repo: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr
+codecs: codecs.json
+results: results/single
+first_n: 1024
+quantiles: [0.1, 0.5, 0.9]
+repeats: 3
+threads: {pbz: [1, 2, 4, 8, 16, 32, 64, 128, 256], mosdepth: [1, 2, 4, 8, 16], megadepth: [1, 4, 16]}

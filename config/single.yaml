@@ -10,4 +10,4 @@ results: results/single
 first_n: 1024
 quantiles: [0.1, 0.5, 0.9]
 repeats: 3
-threads: {pbz: [1, 2, 4, 8, 16, 32, 64, 128, 256], mosdepth: [1, 2, 4, 8, 16], megadepth: [1, 4, 16]}
+threads: {pbz: [1, 2, 4, 8, 16, 32, 64], mosdepth: [1, 2, 4, 8, 16, 32, 64], megadepth: [1, 2, 4, 8, 16, 32, 64]}

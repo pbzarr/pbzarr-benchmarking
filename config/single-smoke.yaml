@@ -10,4 +10,4 @@ results: results/single-smoke
 first_n: 4
 quantiles: [0.5]
 repeats: 1
-threads: {pbz: [256], mosdepth: [4], megadepth: [4]}
+threads: {pbz: [64], mosdepth: [4], megadepth: [4]}

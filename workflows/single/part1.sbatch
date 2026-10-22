@@ -5,7 +5,7 @@
 #SBATCH --nodelist=rw244
 #SBATCH --exclusive
 #SBATCH --mem=1450000M
-#SBATCH --time=1-00:00:00
+#SBATCH --time=2-00:00:00
 #SBATCH --output=results/single/logs/part1-%j.log
 
 # Part 1: time creating one depth track from one CRAM, for PBZ, D4 and BigWig.

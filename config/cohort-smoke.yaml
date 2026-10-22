@@ -1,5 +1,5 @@
-manifest: config/1kg-sr.tsv
-crams_dir: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-high-coverage/crams
+manifest: config/smoke-manifest.tsv
+crams_dir: /scratch/ucgd/lustre-labs/vollger/users/cade/pbzarr-benchmarking/smoke-crams
 reference: /scratch/ucgd/lustre-labs/vollger/assemblies/GRCh38_full_analysis_set_plus_decoy_hla.fa
 chrom_sizes: /scratch/ucgd/lustre-labs/vollger/assemblies/GRCh38_full_analysis_set_plus_decoy_hla.chrom.sizes
 regions_bed: random.bed
@@ -8,8 +8,10 @@ pbz_repo: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr
 codecs: codecs.json
 cores: 256
 results: results/cohort-smoke
-sample_counts: [32]
-noise_check: {n: 32, builds: 1}
-scan_trials: 3
+sample_counts: [4]
+noise_check: {n: 4, builds: 1}
+scan_trials: 1
 tools: [pbz, d4, bigwig]
 disk_per_sample_gb: 6
+# Not used at N = 4 (below cores), but must not be null.
+packing: {d4: {threads: 4, jobs: 64}, bigwig: {threads: 1, jobs: 200}}

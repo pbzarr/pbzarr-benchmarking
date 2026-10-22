@@ -145,12 +145,16 @@ on the exclusive node rw244 and has two parts, each with its own workflows,
 configs and batch scripts. The design is in
 `docs/superpowers/specs/2026-10-20-creation-benchmark-design.md`.
 
-- `workflows/single` is part 1: one depth track from one CRAM, for PBZ,
-  mosdepth (D4) and Megadepth (BigWig), at several thread counts. Config:
-  `config/single.yaml`.
-- `workflows/cohort` is part 2: one cohort store built from the first N
-  manifest samples, with one workflow per tool (`pbz.smk`, `d4.smk`,
-  `bigwig.smk`), plus the cold scans. Config: `config/cohort.yaml`.
+- **Part 1** (`workflows/single/`, config `config/single.yaml`) times making
+  one depth track from one CRAM, for PBZ, mosdepth (D4) and Megadepth
+  (BigWig), at several thread counts. Start it with
+  `sbatch workflows/single/part1.sbatch`.
+- **Part 2** (`workflows/cohort/`, config `config/cohort.yaml`) builds one
+  cohort store from the first N manifest samples, once for each tool, and runs
+  the cold scans on it. There is one workflow per tool (`pbz.smk`, `d4.smk`,
+  `bigwig.smk`, which share `common.smk`), each with a `build` target and a
+  `scans` target. Start it with `bash workflows/cohort/submit_part2.sh`, or
+  one job at a time with `sbatch workflows/cohort/part2.sbatch N BUILD`.
 - `workflows/lib/evict.py` drops files from the page cache. Both parts use it.
 
 Run everything from the cluster checkout,
@@ -161,61 +165,128 @@ not create the log folders, so create them once:
 mkdir -p results/single/logs results/single-smoke/logs results/cohort/logs results/cohort-smoke/logs
 ```
 
-Copy the files to the cluster from this repo. Do not use `--delete`: the cluster
-checkout has its own `config/1kg-sr.tsv`, `codecs.json`, `random.bed` and
-`results/`.
+### How things are measured
+
+- **Part 1:** each run is one command inside `/usr/bin/time -f '%e\t%U\t%S\t%M'`,
+  with `sync` in the timed command. The CRAM and its index are dropped from the
+  page cache first. The row in `runs.tsv` has wall, user and system seconds,
+  peak RSS in KB, and the size and file count of the output.
+- **Part 2 builds:** `workflows/create/timed_trials.py` times the whole
+  `snakemake build` call (plus `sync`), one trial, with every CRAM and `.crai`
+  of the cohort dropped from the page cache first. Wall time includes
+  Snakemake's start-up. Peak RSS is summed over the process tree and sampled.
+- **Part 2 scans:** `timed_trials.py` too, with a cold cache before every trial
+  (`scan_trials` trials). The scans run on build 1 only, one at a time.
+- **D4 merge:** `d4tools merge` inside `/usr/bin/time`, in `d4.smk`. It goes to
+  `merge.tsv`. The per-sample files are dropped from the page cache before it.
+- **Peak disk:** computed from file sizes, not sampled. It is the output size,
+  plus for D4 the size of the per-sample files that sit next to the merged
+  file.
+
+### Thread counts and packing
+
+PBZ always uses all `cores` (256) in one process. D4 and BigWig run one
+mosdepth or Megadepth process per sample:
+
+- With N below `cores`, all N samples run at once, each with
+  `max(1, cores / N)` threads.
+- With N at or above `cores`, the jobs at once and the threads per job come
+  from `packing:` in `config/cohort.yaml`. Set the four numbers by hand from
+  part 1's `results/single/runs.tsv`. They are `null` in the file, and until
+  they are set, `submit_part2.sh` refuses to submit and `part2.sbatch` refuses
+  to start such a build. The jobs at once never exceed N.
+
+```yaml
+packing: {d4: {threads: null, jobs: null}, bigwig: {threads: null, jobs: null}}
+```
+
+Each Snakemake rule declares its threads, and the driver gives `snakemake`
+`--cores JOBS * THREADS` for D4 and BigWig builds, and `--cores 256` for PBZ
+builds and all scans. The PBZ import and the scans check that they really got
+256 threads. Details are in `workflows/cohort/common.smk`.
+
+### Copy to the cluster
+
+Do not use `--delete`: the cluster checkout has its own `config/1kg-sr.tsv`,
+`codecs.json`, `random.bed` and `results/`.
 
 ```sh
 rsync -av --relative workflows/lib workflows/single workflows/cohort \
     config/single.yaml config/single-smoke.yaml config/cohort.yaml \
-    config/cohort-smoke.yaml config/packing-smoke.yaml \
+    config/cohort-smoke.yaml config/smoke-manifest.tsv \
     redwood:/scratch/ucgd/lustre-labs/vollger/users/cade/pbzarr-benchmarking/
 ```
 
-Check a workflow on a login node with a dry run. Part 1 expects 153 `run_*`
-jobs:
+### Dry runs
+
+Check a workflow on a login node. Part 1 expects 153 `run_*` jobs (3 with
+`config/single-smoke.yaml`):
 
 ```sh
 export PATH=$PWD/.pixi/envs/default/bin:$PATH
 snakemake -s workflows/single/Snakefile --configfile config/single.yaml \
-    --directory /tmp/single-dry --cores 256 --resources bench=1 -n --printshellcmds
+    --directory /tmp/single-dry --cores 256 --resources bench=1 -n
 ```
 
-For part 2, `/tmp/s32.txt` holds the first 32 sample IDs of the manifest and
-`/tmp/ref.fa` is any placeholder file. Use `pbz`, `d4` or `bigwig` for `<tool>`:
+For part 2, `/tmp/samples.txt` holds the sample IDs (as many as `n_samples`, one
+per line) and `/tmp/ref.fa` is any placeholder file. Use `pbz`, `d4` or `bigwig`
+for `<tool>`:
 
 ```sh
-snakemake -s workflows/cohort/<tool>.smk build scans --configfile config/cohort.yaml \
-    --config n_samples=32 samples_file=/tmp/s32.txt results=/tmp/r build=1 \
-    threads_per_job=2 reference_local=/tmp/ref.fa --directory /tmp/<tool>-dry \
-    --cores 256 --resources pack=100 bench=1 -n --printshellcmds
+snakemake -s workflows/cohort/<tool>.smk build scans --configfile config/cohort-smoke.yaml \
+    --config n_samples=4 samples_file=/tmp/samples.txt results=/tmp/r build=1 \
+    threads_per_job=64 reference_local=/tmp/ref.fa --directory /tmp/<tool>-dry \
+    --cores 256 --resources bench=1 -n --printshellcmds
 ```
 
-**Smoke tests.** Each needs rw244 to itself, so make sure no other job runs there
-first. Part 1 takes about 20 minutes, part 2 more than an hour. Submit again after
-a smoke run and nothing is redone: part 1 skips finished runs and part 2 prints
+### Smoke tests
+
+Each needs rw244 to itself, so make sure no other job runs there first. They use
+four chr22-only CRAMs in `smoke-crams/` (listed in `config/smoke-manifest.tsv`).
+Part 1 takes about 10 minutes and part 2 about 20. Submit again after a smoke
+run and nothing is redone: part 1 skips finished runs and part 2 prints
 `already done`.
 
 ```sh
-CONFIG=config/single-smoke.yaml sbatch workflows/single/part1.sbatch
-CONFIG=config/cohort-smoke.yaml PACKING=config/packing-smoke.yaml \
-    sbatch workflows/cohort/part2.sbatch 32 1
+CONFIG=config/single-smoke.yaml sbatch --output=results/single-smoke/logs/part1-%j.log \
+    workflows/single/part1.sbatch
+CONFIG=config/cohort-smoke.yaml bash workflows/cohort/submit_part2.sh
 ```
 
-**Real runs.**
+The part 2 smoke test submits one job: N = 4, build 1.
 
-1. Part 1: `sbatch workflows/single/part1.sbatch`. If the job dies, submit it again.
-   It writes `results/single/runs.tsv` (one row per run), `samples.tsv` and
-   `context.txt`.
-2. Choose the D4 and BigWig packing from part 1's medians:
-   `python workflows/cohort/packing.py choose results/single/runs.tsv > config/packing.yaml`.
-3. Part 2: `workflows/cohort/submit_part2.sh` submits every cohort build as its
-   own job, one after another: N = 32, 64, 128, 256, 512, 1024, then builds 2
-   and 3 at N = 256. A job that died starts over when submitted again; a job
-   with a `DONE` file exits. Each job writes
-   `results/cohort/n<N>/b<build>/` with `builds.tsv`, `merge.tsv` (D4 only),
-   `scans/`, `context.txt`, `samples.txt`, `order.txt`, `logs/` and `DONE`.
+### Real runs
 
-Part 1's batch job asks Slurm for 1450000M of memory, not `--mem=0`: all of
-rw244's memory is above the account's group limit, so `--mem=0` is rejected.
+1. Part 1: `sbatch workflows/single/part1.sbatch`. If the job dies, submit it
+   again: runs that already have a result file are skipped.
+2. Fill in `packing:` in `config/cohort.yaml` from `results/single/runs.tsv`,
+   and copy the file to the cluster.
+3. Part 2: `bash workflows/cohort/submit_part2.sh` submits every cohort build as
+   its own job, one after another: N = 32, 64, 128, 256, 512, 1024, then builds
+   2 and 3 at N = 256. A job that died starts over when submitted again; a job
+   with a `DONE` file exits.
+
+### Where results land
+
+Part 1, under `results/single/` (`results/single-smoke/` for the smoke test):
+
+- `runs.tsv`: one row per run (tool, sample, threads, repeat, CRAM bytes, wall,
+  user and system seconds, peak RSS KB, output bytes and files).
+- `runs/<tool>/<sample>/t<threads>/r<repeat>.tsv`: the one-row file for each
+  run, which `runs.tsv` joins.
+- `samples.tsv`: the samples picked, by CRAM size.
+- `context.txt` (host, job id, tool versions, `lscpu`) and `logs/`.
+
+Part 2, one folder for each job, `results/cohort/n<N>/b<build>/`:
+
+- `builds.tsv`: one row per tool, in build order. It has the threads per job
+  and jobs at once, bytes read, wall seconds, CPU seconds, peak RSS in MiB,
+  MiB read from storage (`io_in`), output bytes and files, and peak disk bytes.
+- `merge.tsv`: the D4 merge, one row.
+- `scans/<tool>.<analysis>.tsv`: the timing tables of the scans (build 1 only).
+- `timing/build-<tool>.tsv`: the raw `timed_trials.py` row of each build.
+- `order.txt` (tool order), `samples.txt`, `context.txt`, `logs/` and `DONE`.
+
+Both batch jobs ask Slurm for 1450000M of memory, not `--mem=0`: all of rw244's
+memory is above the account's group limit, so `--mem=0` is rejected.
 `--exclusive` still gives the job the whole node.

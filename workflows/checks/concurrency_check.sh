@@ -53,9 +53,9 @@ start() {  # start TOOL MODE REP: one timed run in the background
 }
 
 clear_cache() {
-    local paths=()
-    for tool in pbz mosdepth megadepth; do
-        paths+=("$CRAMS/${SAMPLE[$tool]}.final.cram" "$CRAMS/${SAMPLE[$tool]}.final.cram.crai")
+    local paths=() t
+    for t in pbz mosdepth megadepth; do
+        paths+=("$CRAMS/${SAMPLE[$t]}.final.cram" "$CRAMS/${SAMPLE[$t]}.final.cram.crai")
     done
     python "$R/workflows/lib/evict.py" "${paths[@]}"
 }

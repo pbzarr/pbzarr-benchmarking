@@ -10,15 +10,27 @@
 
 # Part 2: build one cohort of N samples with PBZ, D4 and BigWig, one tool at a
 # time. Usage: part2.sbatch N BUILD   (submit_part2.sh submits every job)
-# Each build is its own Slurm step, named build-<tool>, so sacct gives its wall
-# time, CPU time and max RSS. The scans run on build 1 only. Then the tool's
-# data is deleted. Submit with CONFIG= and PACKING= set to use other files, for
-# example the smoke test: config/cohort-smoke.yaml and config/packing-smoke.yaml.
+# Each build is timed by workflows/create/timed_trials.py, the tool the scans use
+# too: one trial with a cold page cache (it clears every CRAM and .crai first).
+# It writes $OUT/timing/build-<tool>.tsv, and builds.tsv gets one row per tool
+# from it. The scans run on build 1 only. Then the tool's data is deleted.
+# Submit with CONFIG= set to use another file, for example the smoke test:
+#   CONFIG=config/cohort-smoke.yaml sbatch workflows/cohort/part2.sbatch 4 1
 # If the job dies, submit it again: a job without $OUT/DONE starts over, one
 # with it exits.
 # The job asks for 1450000M, not --mem=0: all of rw244's memory (1532000M) is above
 # the account's group limit (1487.5G), so Slurm rejects --mem=0 with AssocGrpMemLimit.
 # --exclusive still gives the job the whole node.
+#
+# Threads per job (THREADS) and jobs at once (JOBS) for each build:
+#   PBZ                   THREADS = cores, JOBS = 1.
+#   D4, BigWig, N < cores JOBS = N, THREADS = max(1, floor(cores / N)).
+#   D4, BigWig, N >= cores THREADS and JOBS are packing.<tool>.threads and
+#                         packing.<tool>.jobs in the config file, set by hand
+#                         from part 1's results. The job refuses to start if
+#                         they are null.
+# The build runs snakemake with --cores JOBS * THREADS, the scans with
+# --cores <cores>. See workflows/cohort/common.smk.
 
 set -euo pipefail
 
@@ -29,15 +41,17 @@ R=/scratch/ucgd/lustre-labs/vollger/users/cade/pbzarr-benchmarking
 cd "$R"
 export PATH="$R/.pixi/envs/default/bin:$PATH"
 CONFIG=${CONFIG:-config/cohort.yaml}
-PACKING=${PACKING:-config/packing.yaml}
 
-# Read one value from the config file, one line per list item.
+# Read one value from the config file: a dotted name goes down into mappings
+# (packing.d4.jobs), a list gives one line per item, and null gives an empty line.
 config_value() {
     python -c '
 import sys, yaml
-value = yaml.safe_load(open(sys.argv[1]))[sys.argv[2]]
+value = yaml.safe_load(open(sys.argv[1]))
+for key in sys.argv[2].split("."):
+    value = value[key]
 for item in value if isinstance(value, list) else [value]:
-    print(item)
+    print("" if item is None else item)
 ' "$CONFIG" "$1"
 }
 RESULTS=$(config_value results)
@@ -58,7 +72,42 @@ if [ -e "$OUT/DONE" ]; then
     echo "already done"
     exit 0
 fi
-[ -f "$PACKING" ] || { echo "no packing file: $PACKING" >&2; exit 1; }
+
+# Set THREADS (threads per job) and JOBS (jobs at once) for one tool. Stops the
+# whole job if a value that is needed is missing from the config.
+pack() {
+    local tool=$1 threads jobs
+    case "$tool" in
+        pbz)
+            # One process using every core.
+            THREADS=$CORES
+            JOBS=1
+            ;;
+        d4 | bigwig)
+            if [ "$N" -lt "$CORES" ]; then
+                # Fewer samples than cores: every sample at once, the cores shared out evenly.
+                JOBS=$N
+                THREADS=$((CORES / N > 1 ? CORES / N : 1))
+            else
+                threads=$(config_value "packing.$tool.threads" || true)
+                jobs=$(config_value "packing.$tool.jobs" || true)
+                if ! [[ $threads =~ ^[1-9][0-9]*$ && $jobs =~ ^[1-9][0-9]*$ ]]; then
+                    echo "N=$N is not below cores=$CORES, so $CONFIG must give packing.$tool.threads and packing.$tool.jobs as whole numbers (now: threads='$threads', jobs='$jobs'). Set them from part 1's results." >&2
+                    exit 1
+                fi
+                THREADS=$threads
+                JOBS=$jobs
+            fi
+            ;;
+        *) echo "unknown tool: $tool" >&2; exit 1 ;;
+    esac
+}
+# Check every tool in the config now, before anything is deleted or built, so a
+# missing packing value stops the job at once.
+for tool in $(config_value tools); do
+    pack "$tool"
+done
+
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
@@ -81,7 +130,6 @@ trap save_logs EXIT
     echo "slurm job id: $SLURM_JOB_ID"
     echo "date: $(date -Is)"
     echo "config: $CONFIG"
-    echo "packing: $PACKING"
     echo "n: $N"
     echo "build: $BUILD"
     echo "pbz commit: $(git -C "$PBZ_REPO" rev-parse --short HEAD || true)"
@@ -90,6 +138,8 @@ trap save_logs EXIT
     ls "$R/.pixi/envs/default/conda-meta" | grep -E '^(mosdepth|d4tools|megadepth|htslib)-' || true
     echo "squeue:"
     squeue -w "$(hostname)" || true
+    echo "lscpu:"
+    lscpu || true
 } > "$OUT/context.txt"
 
 # Open files: raise the limit as far as it goes, and stop if it is below 4 * N + 256.
@@ -135,9 +185,12 @@ crams_dir, samples = sys.argv[1:3]
 print(sum(os.path.getsize(f"{crams_dir}/{line.strip()}.final.cram") for line in open(samples) if line.strip()))
 ' "$CRAMS_DIR" "$OUT/samples.txt")
 
-# Every CRAM and .crai, to clear from the page cache before each build.
-awk -v dir="$CRAMS_DIR" '{ print dir "/" $1 ".final.cram"; print dir "/" $1 ".final.cram.crai" }' \
-    "$OUT/samples.txt" > "$WORK/evict.txt"
+# Every CRAM and .crai as a --data argument of timed_trials.py, which clears them
+# from the page cache before the build.
+data_args=()
+while read -r sample; do
+    data_args+=(--data "$CRAMS_DIR/$sample.final.cram" --data "$CRAMS_DIR/$sample.final.cram.crai")
+done < "$OUT/samples.txt"
 
 # Tool order for this job: the config's tools, shuffled with the fixed seed
 # "$N-$BUILD". The seed is hashed first: shuf reads only the first few bytes of
@@ -151,45 +204,31 @@ position=0
 for tool in $ORDER; do
     position=$((position + 1))
     data=$WORK/$tool/data
+    pack "$tool"
 
-    # Cold inputs for the build.
-    xargs python workflows/lib/evict.py < "$WORK/evict.txt"
-
-    # Threads per job and jobs at once. PBZ is one process using every core.
-    case "$tool" in
-        pbz) THREADS=$CORES; JOBS=1 ;;
-        d4 | bigwig)
-            packing=$(python workflows/cohort/packing.py for "$PACKING" "$tool" "$N")
-            read -r THREADS JOBS <<< "$packing"
-            ;;
-        *) echo "unknown tool: $tool" >&2; exit 1 ;;
-    esac
-
-    # Snakemake starts jobs by their declared threads, so --cores must cover
-    # JOBS * THREADS. The Slurm steps below keep the real CPUs at 256.
-    snakemake_cores=$((JOBS * THREADS > CORES ? JOBS * THREADS : CORES))
+    # Snakemake starts jobs by their declared threads, so --cores = JOBS * THREADS
+    # runs exactly JOBS per-sample jobs at once (for PBZ it is just the cores).
+    snakemake_cores=$((JOBS * THREADS))
     snakemake_config=(--directory "$WORK/$tool" --configfile "$CONFIG"
         --config "n_samples=$N" "samples_file=$OUT/samples.txt" "results=$OUT" "build=$BUILD"
         "threads_per_job=$THREADS" "reference_local=$WORK/ref/reference.fa")
 
-    # The timed build: its own Slurm step, so sacct reports it.
-    srun --ntasks=1 --cpus-per-task=256 --hint=nomultithread --mem=0 \
-        --acctg-freq=task=10 --job-name="build-$tool" \
-        sh -c 'snakemake "$@" && sync' sh \
-        -s "workflows/cohort/$tool.smk" build --cores "$snakemake_cores" \
-        --resources "pack=$JOBS" bench=1 "${snakemake_config[@]}"
+    # The timed build: one trial, CRAMs and .crai cold. `sync` is inside the
+    # timed command, so the time includes flushing the output to disk.
+    timing=$OUT/timing/build-$tool.tsv
+    python workflows/create/timed_trials.py --cache cold --trials 1 --output "$timing" \
+        "${data_args[@]}" \
+        -- sh -c 'snakemake "$@" && sync' sh \
+        -s "workflows/cohort/$tool.smk" build --cores "$snakemake_cores" "${snakemake_config[@]}"
 
-    # The step's accounting row, once it is COMPLETED (up to 60 s).
-    row=
-    for _ in $(seq 30); do
-        row=$(sacct -j "$SLURM_JOB_ID" -n -P --units=K \
-            -o JobID,JobName,State,ElapsedRaw,TotalCPU,UserCPU,SystemCPU,MaxRSS \
-            | awk -F'|' -v name="build-$tool" '$2 == name && $3 == "COMPLETED"' || true)
-        [ -n "$row" ] && break
-        sleep 2
-    done
-    [ -n "$row" ] || { echo "no COMPLETED sacct row for build-$tool" >&2; exit 1; }
-    IFS='|' read -r _ _ _ elapsed_s total_cpu user_cpu system_cpu max_rss <<< "$row"
+    # The build's row in the timing table: wall s, CPU s (user + sys), peak RSS in
+    # MiB (summed over the process tree, sampled) and MiB read from storage.
+    row=$(awk -F'\t' '
+        NR == 1 { for (i = 1; i <= NF; i++) col[$i] = i; next }
+        NR == 2 { print $col["s"] "\t" $col["cpu_time"] "\t" $col["max_rss"] "\t" $col["io_in"] }
+    ' "$timing")
+    [ -n "$row" ] || { echo "no timing row in $timing" >&2; exit 1; }
+    IFS=$'\t' read -r wall_s cpu_s max_rss_mib io_in <<< "$row"
 
     # Output size, without Snakemake's .snakemake_timestamp file. du -sb counts
     # directory entries too, so a build with no non-empty file is also refused.
@@ -208,19 +247,16 @@ for tool in $ORDER; do
     fi
 
     if [ ! -e "$table" ]; then
-        printf 'n\tbuild\ttool\torder\tthreads_per_job\tjobs\tread_bytes\telapsed_s\ttotal_cpu\tuser_cpu\tsystem_cpu\tmax_rss_kb\tout_bytes\tout_files\tpeak_disk_bytes\n' > "$table"
+        printf 'n\tbuild\ttool\torder\tthreads_per_job\tjobs\tread_bytes\twall_s\tcpu_s\tmax_rss_mib\tio_in\tout_bytes\tout_files\tpeak_disk_bytes\n' > "$table"
     fi
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$N" "$BUILD" "$tool" "$position" "$THREADS" "$JOBS" "$READ_BYTES" "$elapsed_s" \
-        "$total_cpu" "$user_cpu" "$system_cpu" "${max_rss%K}" "$out_bytes" "$out_files" \
-        "$peak_disk_bytes" >> "$table"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$N" "$BUILD" "$tool" "$position" "$THREADS" "$JOBS" "$READ_BYTES" "$wall_s" \
+        "$cpu_s" "$max_rss_mib" "$io_in" "$out_bytes" "$out_files" "$peak_disk_bytes" >> "$table"
 
-    # The scans, on build 1 only. Same pinning and config as the build, so
-    # Snakemake sees nothing to rebuild.
+    # The scans, on build 1 only. Same config as the build, so Snakemake sees
+    # nothing to rebuild. They run one at a time (bench=1), each with the cores.
     if [ "$BUILD" = 1 ]; then
-        srun --ntasks=1 --cpus-per-task=256 --hint=nomultithread --mem=0 \
-            --job-name="scans-$tool" \
-            snakemake -s "workflows/cohort/$tool.smk" scans --cores "$snakemake_cores" \
+        snakemake -s "workflows/cohort/$tool.smk" scans --cores "$CORES" \
             --resources bench=1 "${snakemake_config[@]}"
     fi
 

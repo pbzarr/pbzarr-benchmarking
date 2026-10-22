@@ -2,18 +2,16 @@
 # Submit part 2: one job per cohort size (build 1), then the noise-check builds
 # 2 ... noise_check.builds at noise_check.n. The jobs run one after another: each
 # starts when the one before it has ended, however it ended. Run from anywhere.
-# To use other config files, for example the smoke test:
-#   CONFIG=config/cohort-smoke.yaml PACKING=config/packing-smoke.yaml workflows/cohort/submit_part2.sh
+# To use another config file, for example the smoke test:
+#   CONFIG=config/cohort-smoke.yaml workflows/cohort/submit_part2.sh
 
 set -euo pipefail
 
 R=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$R"
 export PATH="$R/.pixi/envs/default/bin:$PATH"
-# part2.sbatch reads these two from its environment, which sbatch copies from here.
+# part2.sbatch reads this from its environment, which sbatch copies from here.
 export CONFIG=${CONFIG:-config/cohort.yaml}
-export PACKING=${PACKING:-config/packing.yaml}
-[ -f "$PACKING" ] || { echo "no packing file: $PACKING" >&2; exit 1; }
 
 # Read one value from the config file; a list gives one line per item.
 config_value() {

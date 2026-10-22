@@ -210,8 +210,18 @@ builds and all scans. The PBZ import and the scans check that they really got
 Do not use `--delete`: the cluster checkout has its own `config/1kg-sr.tsv`,
 `codecs.json`, `random.bed` and `results/`.
 
+Part 2 also reads scripts from `workflows/create` (`timed_trials.py`,
+`bigwig_scan.py`, `over10_pbz.py`, `proposed_api/`; `over10_d4.py` is the
+original of the copy in `workflows/cohort`), so the command names them one by one.
+Never sync the whole `workflows/create` folder: the cluster copy has files that
+exist only there (`disk.smk`, an edited `pbz.smk`), and a folder sync would
+overwrite them.
+
 ```sh
 rsync -av --relative workflows/lib workflows/single workflows/cohort \
+    workflows/create/timed_trials.py workflows/create/bigwig_scan.py \
+    workflows/create/over10_pbz.py workflows/create/over10_d4.py \
+    workflows/create/proposed_api \
     config/single.yaml config/single-smoke.yaml config/cohort.yaml \
     config/cohort-smoke.yaml config/smoke-manifest.tsv \
     redwood:/scratch/ucgd/lustre-labs/vollger/users/cade/pbzarr-benchmarking/
@@ -243,7 +253,7 @@ snakemake -s workflows/cohort/<tool>.smk build scans --configfile config/cohort-
 
 Each needs rw244 to itself, so make sure no other job runs there first. They use
 four chr22-only CRAMs in `smoke-crams/` (listed in `config/smoke-manifest.tsv`).
-Part 1 takes about 10 minutes and part 2 about 20. Submit again after a smoke
+Part 1 takes about 1 minute and part 2 about 2 minutes. Submit again after a smoke
 run and nothing is redone: part 1 skips finished runs and part 2 prints
 `already done`.
 
@@ -264,7 +274,9 @@ The part 2 smoke test submits one job: N = 4, build 1.
 3. Part 2: `bash workflows/cohort/submit_part2.sh` submits every cohort build as
    its own job, one after another: N = 32, 64, 128, 256, 512, 1024, then builds
    2 and 3 at N = 256. A job that died starts over when submitted again; a job
-   with a `DONE` file exits.
+   with a `DONE` file exits. Each job may run 3 days. Each tool's scans stop after
+   `scan_timeout_hours` (16 in `config/cohort.yaml`); if they fail or time out, the
+   job writes `scans-failed-<tool>` and goes on, so the build rows survive.
 
 ### Where results land
 
@@ -275,7 +287,13 @@ Part 1, under `results/single/` (`results/single-smoke/` for the smoke test):
 - `runs/<tool>/<sample>/t<threads>/r<repeat>.tsv`: the one-row file for each
   run, which `runs.tsv` joins.
 - `samples.tsv`: the samples picked, by CRAM size.
-- `context.txt` (host, job id, tool versions, `lscpu`) and `logs/`.
+- `context.txt` and `logs/`. `context.txt` is appended to: each job adds a block
+  with a `start:` line (host, job id, pbz commit, `pbz --version`, the sha256 of
+  the pbz binary and of `codecs.json`, `ulimit -n` and `-u` as the job sees them,
+  tool and Python package versions, `lscpu`) and an `end:` line with the exit
+  status.
+- `config.yaml`: a copy of the config file used. If the file changes before a
+  later submit, the older copy is kept as `config.yaml.~1~`.
 
 Part 2, one folder for each job, `results/cohort/n<N>/b<build>/`:
 
@@ -283,9 +301,50 @@ Part 2, one folder for each job, `results/cohort/n<N>/b<build>/`:
   and jobs at once, bytes read, wall seconds, CPU seconds, peak RSS in MiB,
   MiB read from storage (`io_in`), output bytes and files, and peak disk bytes.
 - `merge.tsv`: the D4 merge, one row.
+- `d4_per_sample_bytes.txt`: total bytes of the per-sample D4 files, which
+  `builds.tsv` adds to the merged file for D4's peak disk bytes.
 - `scans/<tool>.<analysis>.tsv`: the timing tables of the scans (build 1 only).
+- `scans-failed-<tool>`: only if that tool's scans failed or timed out. It has
+  the exit code (124 is a timeout) and a timestamp. The build rows are still
+  valid; that tool's scan tables may be missing.
 - `timing/build-<tool>.tsv`: the raw `timed_trials.py` row of each build.
-- `order.txt` (tool order), `samples.txt`, `context.txt`, `logs/` and `DONE`.
+- `order.txt` (tool order), `samples.txt`, `context.txt` (appended to, as for
+  part 1, with `start:` and `end:` lines), `config.yaml` (a copy of the config
+  file used), `logs/` and `DONE`.
+
+The analysis must read only folders that have `DONE`. A job that died leaves a
+folder without it, with partial rows, until the job is submitted again (which
+starts over).
+
+### Notes for the methods
+
+- **RSS includes file-backed pages.** `max_rss` and `max_rss_mib` count every
+  resident page of the process, including pages of files that the tool maps
+  into memory. This matters for D4's writer: `mosdepth --d4` maps its output
+  file, so its RSS is about the size of that file, whether or not the process
+  allocated that memory. Measured on one smoke CRAM (HG00096, 4 threads, a
+  `/proc/<pid>/status` sample each second, on a `ucgd-rw` node): `mosdepth --d4`
+  peaked at 3.06 GiB VmRSS, of which 0.43 GiB was RssAnon and 2.63 GiB RssFile
+  (its output file is 2,818,589,910 bytes, the same size). `megadepth --bigwig`
+  peaked at 0.41 GiB VmRSS, with 0.40 GiB RssAnon and 5.8 MiB RssFile. Say so
+  wherever D4's peak memory is compared with the other tools.
+- **D4 over10 uses a window and a dictionary width sized to N.**
+  `workflows/cohort/over10_d4.py` reads windows of `min(1 Mb, 128 Mb / N)`
+  bases, so a worker holds about the memory it holds at N = 128, and it sets the
+  dictionary bits to `ceil(log2(N + 1))`, so counts 0 to N stay in the primary
+  table. Up to N = 128 the window is the 1 Mb of the older runs.
+- **D4 region scans use no index**, as in the D4 paper's benchmarks. The build
+  never runs `d4tools index`.
+- **D4's per-sample phase (build minus merge) includes eviction and temp-file
+  deletion.** Besides the mosdepth runs it holds the `sync` and page-cache
+  eviction before the merge, and deleting the per-sample files afterwards.
+- **Kernel writeback and encryption CPU is not in `cpu_s`.** `cpu_s` is the user
+  and system time of the tool's own processes; kernel threads that write dirty
+  pages back or encrypt them are not counted.
+- **A `mean_load` above 100 x cores means hyperthreads were used.** `mean_load`
+  in the timing files is `100 * cpu_time / s`, so one fully busy CPU is 100. The
+  node has 512 logical CPUs; with `cores` at 256, a value above 25600 means the
+  process ran on the second thread of some cores.
 
 Both batch jobs ask Slurm for 1450000M of memory, not `--mem=0`: all of rw244's
 memory is above the account's group limit, so `--mem=0` is rejected.

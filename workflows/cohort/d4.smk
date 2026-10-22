@@ -11,7 +11,8 @@ wildcard_constraints:
     sample="[^/]+"
 
 EVICT = str(ROOT / "workflows/lib/evict.py")
-OVER10_D4 = str(CREATE / "over10_d4.py")
+# The cohort copy of workflows/create/over10_d4.py: window and dictionary sized to N.
+OVER10_D4 = str(ROOT / "workflows/cohort/over10_d4.py")
 PER_SAMPLE = [f"tmp/{sample}.per-base.d4" for sample in SAMPLES]
 
 
@@ -90,9 +91,10 @@ rule merge:
 
 
 # The scans below run the rules d4_stat and d4_over10 of
-# workflows/create/analysis.smk through the same timed_trials.py, with the same
-# scripts, used in place. What differs: the data is in the working directory,
-# threads are CORES, the cache is always cold, and trials come from the config.
+# workflows/create/analysis.smk through the same timed_trials.py. The over10
+# script is the cohort copy (workflows/cohort/over10_d4.py, sized to N). What
+# differs: the data is in the working directory, threads are CORES, the cache is
+# always cold, and trials come from the config.
 #
 # Everything a scan writes (stat tables, over10 outputs, logs) goes in the working
 # directory on local disk. Only the timing table goes to

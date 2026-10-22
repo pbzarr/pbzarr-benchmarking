@@ -30,23 +30,48 @@ config_value() {
 RESULTS=$(config_value results)
 PBZ_REPO=$(config_value pbz_repo)
 CODECS=$(config_value codecs)
+PBZ=$(config_value pbz)
 
-# Record what ran, where and with which versions.
 mkdir -p "$RESULTS"
+
+# The end of context.txt, with the exit status, whether the job finished or failed.
+finish() {
+    local status=$?
+    echo "end: $(date -Is) (exit status $status)" >> "$RESULTS/context.txt" || true
+}
+trap finish EXIT
+
+# Record what ran, where and with which versions. context.txt is appended to, so
+# a job submitted again adds a block. config.yaml is a copy of the config file; if
+# the file changed, the old copy is kept as config.yaml.~1~.
+cmp -s "$CONFIG" "$RESULTS/config.yaml" || cp --backup=numbered "$CONFIG" "$RESULTS/config.yaml" || true
 {
+    echo "start: $(date -Is)"
     echo "hostname: $(hostname)"
     echo "slurm job id: $SLURM_JOB_ID"
-    echo "date: $(date -Is)"
-    echo "config: $CONFIG"
+    echo "config: $CONFIG (copied to config.yaml)"
     echo "pbz commit: $(git -C "$PBZ_REPO" rev-parse --short HEAD || true)"
-    echo "codecs: $(sha256sum "$CODECS")"
+    echo "pbz version: $("$PBZ" --version || true)"
+    echo "pbz binary: $(sha256sum "$PBZ" || true)"
+    echo "codecs: $(sha256sum "$CODECS" || true)"
+    echo "ulimit -n: $(ulimit -n || true)"
+    echo "ulimit -u: $(ulimit -u || true)"
     echo "tool versions:"
     ls "$R/.pixi/envs/default/conda-meta" | grep -E '^(mosdepth|d4tools|megadepth|htslib)-' || true
+    echo "python packages:"
+    python -c '
+import importlib.metadata
+for name in ("pyd4", "pbzarr", "zarr", "dask"):
+    try:
+        print(f"{name} {importlib.metadata.version(name)}")
+    except Exception as error:
+        print(f"{name} unknown ({error})")
+' || true
     echo "squeue:"
     squeue -w "$(hostname)" || true
     echo "lscpu:"
     lscpu || true
-} > "$RESULTS/context.txt"
+} >> "$RESULTS/context.txt"
 
 snakemake -s workflows/single/Snakefile --configfile "$CONFIG" \
     --directory "${TMPDIR:?TMPDIR is not set}/single" --cores 256 \

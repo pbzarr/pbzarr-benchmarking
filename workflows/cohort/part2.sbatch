@@ -66,6 +66,7 @@ CODECS=$(config_value codecs)
 PBZ_REPO=$(config_value pbz_repo)
 CORES=$(config_value cores)
 DISK_GB=$(config_value disk_per_sample_gb)
+PBZ=$(config_value pbz)
 SCAN_TIMEOUT_HOURS=$(config_value scan_timeout_hours)
 if ! [[ $SCAN_TIMEOUT_HOURS =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
     echo "$CONFIG must give scan_timeout_hours as a number (now: '$SCAN_TIMEOUT_HOURS')" >&2
@@ -131,32 +132,55 @@ save_logs() {
         cp -r "$dir/." "$OUT/logs/$tool/" || true
     done
 }
-trap save_logs EXIT
+# The EXIT trap: keep the logs and write the end of context.txt, with the exit
+# status, whether the job finished or failed.
+finish() {
+    local status=$?
+    save_logs
+    echo "end: $(date -Is) (exit status $status)" >> "$OUT/context.txt" || true
+}
+trap finish EXIT
 
-# Record what ran, where and with which versions.
-{
-    echo "hostname: $(hostname)"
-    echo "slurm job id: $SLURM_JOB_ID"
-    echo "date: $(date -Is)"
-    echo "config: $CONFIG"
-    echo "n: $N"
-    echo "build: $BUILD"
-    echo "pbz commit: $(git -C "$PBZ_REPO" rev-parse --short HEAD || true)"
-    echo "codecs: $(sha256sum "$CODECS")"
-    echo "tool versions:"
-    ls "$R/.pixi/envs/default/conda-meta" | grep -E '^(mosdepth|d4tools|megadepth|htslib)-' || true
-    echo "squeue:"
-    squeue -w "$(hostname)" || true
-    echo "lscpu:"
-    lscpu || true
-} > "$OUT/context.txt"
-
-# Open files: raise the limit as far as it goes, and stop if it is below 4 * N + 256.
+# Open files: raise the limit as far as it goes (it is checked against 4 * N + 256
+# below). Done before context.txt, so that file records the limits the job runs with.
 ulimit -n "$(ulimit -Hn)" || true
 # Threads: the scans start many threads (a pool of 256 worker processes, each with
 # threads of its own). Slurm's default limit is 16384 threads per user, and a
 # scan that reaches it hangs. Raise it as far as it goes.
 ulimit -u "$(ulimit -Hu)" || true
+
+# Record what ran, where and with which versions. Appended, never overwritten.
+cp "$CONFIG" "$OUT/config.yaml" || true
+{
+    echo "start: $(date -Is)"
+    echo "hostname: $(hostname)"
+    echo "slurm job id: $SLURM_JOB_ID"
+    echo "config: $CONFIG (copied to config.yaml)"
+    echo "n: $N"
+    echo "build: $BUILD"
+    echo "pbz commit: $(git -C "$PBZ_REPO" rev-parse --short HEAD || true)"
+    echo "pbz version: $("$PBZ" --version || true)"
+    echo "pbz binary: $(sha256sum "$PBZ" || true)"
+    echo "codecs: $(sha256sum "$CODECS" || true)"
+    echo "ulimit -n: $(ulimit -n || true)"
+    echo "ulimit -u: $(ulimit -u || true)"
+    echo "tool versions:"
+    ls "$R/.pixi/envs/default/conda-meta" | grep -E '^(mosdepth|d4tools|megadepth|htslib)-' || true
+    echo "python packages:"
+    python -c '
+import importlib.metadata
+for name in ("pyd4", "pbzarr", "zarr", "dask"):
+    try:
+        print(f"{name} {importlib.metadata.version(name)}")
+    except Exception as error:
+        print(f"{name} unknown ({error})")
+' || true
+    echo "squeue:"
+    squeue -w "$(hostname)" || true
+    echo "lscpu:"
+    lscpu || true
+} >> "$OUT/context.txt"
+
 limit=$(ulimit -n)
 if [ "$limit" != unlimited ] && [ "$limit" -lt $((4 * N + 256)) ]; then
     echo "open-file limit $limit is below $((4 * N + 256))" >&2

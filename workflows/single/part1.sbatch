@@ -38,15 +38,16 @@ mkdir -p "$RESULTS"
     echo "slurm job id: $SLURM_JOB_ID"
     echo "date: $(date -Is)"
     echo "config: $CONFIG"
-    echo "pbz commit: $(git -C "$PBZ_REPO" rev-parse --short HEAD)"
+    echo "pbz commit: $(git -C "$PBZ_REPO" rev-parse --short HEAD || true)"
     echo "codecs: $(sha256sum "$CODECS")"
     echo "tool versions:"
-    ls "$R/.pixi/envs/default/conda-meta" | grep -E '^(mosdepth|d4tools|megadepth|htslib)-'
+    ls "$R/.pixi/envs/default/conda-meta" | grep -E '^(mosdepth|d4tools|megadepth|htslib)-' || true
     echo "squeue:"
-    squeue -w "$(hostname)"
+    squeue -w "$(hostname)" || true
+    echo "lscpu:"
+    lscpu || true
 } > "$RESULTS/context.txt"
 
-srun --ntasks=1 --cpus-per-task=256 --hint=nomultithread --mem=0 \
-    snakemake -s workflows/single/Snakefile --configfile "$CONFIG" \
+snakemake -s workflows/single/Snakefile --configfile "$CONFIG" \
     --directory "${TMPDIR:?TMPDIR is not set}/single" --cores 256 \
     --resources bench=1 --keep-going

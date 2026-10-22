@@ -11,6 +11,7 @@ results: results/cohort-smoke
 sample_counts: [4]
 noise_check: {n: 4, builds: 1}
 scan_trials: 1
+scan_timeout_hours: 1
 tools: [pbz, d4, bigwig]
 disk_per_sample_gb: 6
 # Not used at N = 4 (below cores), but must not be null.

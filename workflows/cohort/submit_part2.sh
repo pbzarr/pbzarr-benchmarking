@@ -27,6 +27,14 @@ for item in value if isinstance(value, list) else [value]:
 }
 RESULTS=$(config_value results)
 
+# Refuse now, before anything is submitted, if the config has no scan timeout:
+# part2.sbatch needs scan_timeout_hours as a number.
+scan_timeout_hours=$(config_value scan_timeout_hours)
+if ! [[ $scan_timeout_hours =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    echo "Nothing submitted. $CONFIG must give scan_timeout_hours as a number (now: '$scan_timeout_hours')." >&2
+    exit 1
+fi
+
 # Refuse now, before anything is submitted, if a job would need a packing value
 # that is not set. part2.sbatch needs packing.<tool>.threads and .jobs for D4 and
 # BigWig whenever a sample count is not below cores, and it stops at once without

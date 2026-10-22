@@ -5,7 +5,7 @@
 #SBATCH --nodelist=rw244
 #SBATCH --exclusive
 #SBATCH --mem=1450000M
-#SBATCH --time=1-00:00:00
+#SBATCH --time=3-00:00:00
 #SBATCH --output=results/cohort/logs/part2-%j.log
 
 # Part 2: build one cohort of N samples with PBZ, D4 and BigWig, one tool at a
@@ -14,6 +14,9 @@
 # too: one trial with a cold page cache (it clears every CRAM and .crai first).
 # It writes $OUT/timing/build-<tool>.tsv, and builds.tsv gets one row per tool
 # from it. The scans run on build 1 only. Then the tool's data is deleted.
+# Each tool's scans run under `timeout` (config key scan_timeout_hours). If they
+# fail or time out, the job writes $OUT/scans-failed-<tool> and goes on, so the
+# build rows of the other tools survive. A failed build still stops the job.
 # Submit with CONFIG= set to use another file, for example the smoke test:
 #   CONFIG=config/cohort-smoke.yaml sbatch workflows/cohort/part2.sbatch 4 1
 # If the job dies, submit it again: a job without $OUT/DONE starts over, one
@@ -63,6 +66,11 @@ CODECS=$(config_value codecs)
 PBZ_REPO=$(config_value pbz_repo)
 CORES=$(config_value cores)
 DISK_GB=$(config_value disk_per_sample_gb)
+SCAN_TIMEOUT_HOURS=$(config_value scan_timeout_hours)
+if ! [[ $SCAN_TIMEOUT_HOURS =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    echo "$CONFIG must give scan_timeout_hours as a number (now: '$SCAN_TIMEOUT_HOURS')" >&2
+    exit 1
+fi
 
 OUT=$RESULTS/n$N/b$BUILD
 WORK=${TMPDIR:?TMPDIR is not set}/cohort
@@ -256,9 +264,19 @@ for tool in $ORDER; do
 
     # The scans, on build 1 only. Same config as the build, so Snakemake sees
     # nothing to rebuild. They run one at a time (bench=1), each with the cores.
+    # They run under `timeout`, which signals the whole process group (exit status
+    # 124 on a timeout). If they fail or time out, the job records it in
+    # scans-failed-<tool> and goes on, so a scan problem does not cost the build rows.
     if [ "$BUILD" = 1 ]; then
-        snakemake -s "workflows/cohort/$tool.smk" scans --cores "$CORES" \
-            --resources bench=1 "${snakemake_config[@]}"
+        scan_status=0
+        timeout --kill-after=60 "${SCAN_TIMEOUT_HOURS}h" \
+            snakemake -s "workflows/cohort/$tool.smk" scans --cores "$CORES" \
+            --resources bench=1 "${snakemake_config[@]}" || scan_status=$?
+        if [ "$scan_status" -ne 0 ]; then
+            echo "$tool scans failed with exit status $scan_status (124 means timed out after ${SCAN_TIMEOUT_HOURS}h)" >&2
+            printf 'exit code: %s\ntimestamp: %s\nscan_timeout_hours: %s\n' \
+                "$scan_status" "$(date -Is)" "$SCAN_TIMEOUT_HOURS" > "$OUT/scans-failed-$tool"
+        fi
     fi
 
     save_logs

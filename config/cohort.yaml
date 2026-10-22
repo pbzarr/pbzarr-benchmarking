@@ -11,6 +11,8 @@ results: results/cohort
 sample_counts: [32, 64, 128, 256, 512, 1024]
 noise_check: {n: 256, builds: 3}
 scan_trials: 3
+# Each tool's scans in a part 2 job stop after this many hours (see part2.sbatch).
+scan_timeout_hours: 16
 tools: [pbz, d4, bigwig]
 disk_per_sample_gb: 6
 # D4 and BigWig builds with N >= cores: threads per job and jobs at once. Set by

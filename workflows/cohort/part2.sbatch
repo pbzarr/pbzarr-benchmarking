@@ -25,10 +25,10 @@
 # Threads per job (THREADS) and jobs at once (JOBS) for each build:
 #   PBZ                   THREADS = cores, JOBS = 1.
 #   D4, BigWig, N < cores JOBS = N, THREADS = max(1, floor(cores / N)).
-#   D4, BigWig, N >= cores THREADS and JOBS are packing.<tool>.threads and
-#                         packing.<tool>.jobs in the config file, set by hand
-#                         from part 1's results. The job refuses to start if
-#                         they are null.
+#   D4, BigWig, N >= cores THREADS = packing.<tool>.threads and JOBS =
+#                         min(packing.<tool>.jobs, N), from the config file, set
+#                         by hand from part 1's results. The job refuses to
+#                         start if they are null. builds.tsv records the JOBS used.
 # The build runs snakemake with --cores JOBS * THREADS, the scans with
 # --cores <cores>. See workflows/cohort/common.smk.
 
@@ -96,7 +96,8 @@ pack() {
                     exit 1
                 fi
                 THREADS=$threads
-                JOBS=$jobs
+                # Never more jobs than samples.
+                JOBS=$((jobs < N ? jobs : N))
             fi
             ;;
         *) echo "unknown tool: $tool" >&2; exit 1 ;;

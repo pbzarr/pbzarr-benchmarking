@@ -4,7 +4,8 @@ reference: /scratch/ucgd/lustre-labs/vollger/assemblies/GRCh38_full_analysis_set
 chrom_sizes: /scratch/ucgd/lustre-labs/vollger/assemblies/GRCh38_full_analysis_set_plus_decoy_hla.chrom.sizes
 pbz: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr/target/release/pbz
 pbz_repo: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr
-codecs: codecs.json
+# n1codecs.json: the 1D single-sample codec (pcodec 8, 1,048,576 shards of 16,384 chunks)
+codecs: n1codecs.json
 results: results/single
 first_n: 1024
 quantiles: [0.1, 0.5, 0.9]

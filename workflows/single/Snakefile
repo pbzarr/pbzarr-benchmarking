@@ -145,7 +145,7 @@ rule run_pbz:
         r"""
         python {params.evict} {input.cram} {input.crai}
         mkdir -p {params.data}
-        /usr/bin/time -f '%e\t%U\t%S\t%M' -o {params.data}/time.txt sh -c '{params.pbz} import bam {input.cram}:{wildcards.sample} --reference {input.ref} --threads {wildcards.threads} --track depth -c sample --codecs @{input.codecs} --no-progress -o {params.store} && sync'
+        /usr/bin/time -f '%e\t%U\t%S\t%M' -o {params.data}/time.txt sh -c '{params.pbz} import bam {input.cram}:{wildcards.sample} --reference {input.ref} --threads {wildcards.threads} --track depth --codecs @{input.codecs} --no-progress -o {params.store} && sync'
         test -s {params.store}
         chunks=$(find {params.store}/depth/values/c -type f | wc -l)
         test "$chunks" -gt 0

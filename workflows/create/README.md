@@ -208,7 +208,8 @@ builds and all scans. The PBZ import and the scans check that they really got
 ### Copy to the cluster
 
 Do not use `--delete`: the cluster checkout has its own `config/1kg-sr.tsv`,
-`codecs.json`, `random.bed` and `results/`.
+`codecs.json` (cohort, 2D), `n1codecs.json` (part 1, 1D single-sample store),
+`random.bed` and `results/`.
 
 Part 2 also reads scripts from `workflows/create` (`timed_trials.py`,
 `bigwig_scan.py`, `over10_pbz.py`, `proposed_api/`; `over10_d4.py` is the

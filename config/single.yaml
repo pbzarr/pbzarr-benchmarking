@@ -8,6 +8,6 @@ pbz_repo: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr
 codecs: n1codecs.json
 results: results/single
 first_n: 1024
-quantiles: [0.1, 0.5, 0.9]
+quantiles: [0.5]
 repeats: 3
-threads: {pbz: [1, 2, 4, 8, 16, 32, 64], mosdepth: [1, 2, 4, 8, 16, 32, 64], megadepth: [1, 2, 4, 8, 16, 32, 64]}
+threads: {pbz: [1, 4, 16, 64], mosdepth: [1, 4, 16, 64], megadepth: [1, 4, 16, 64]}

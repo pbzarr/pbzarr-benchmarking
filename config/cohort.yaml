@@ -13,3 +13,8 @@ noise_check: {n: 256, builds: 3}
 scan_trials: 3
 tools: [pbz, d4, bigwig]
 disk_per_sample_gb: 6
+# D4 and BigWig builds with N >= cores: threads per job and jobs at once. Set by
+# hand from part 1's results (results/single/runs.tsv). Below that, part2.sbatch
+# runs N jobs of floor(cores / N) threads. Left null, part2.sbatch refuses to
+# start a build that needs them.
+packing: {d4: {threads: null, jobs: null}, bigwig: {threads: null, jobs: null}}

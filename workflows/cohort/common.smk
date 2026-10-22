@@ -8,17 +8,22 @@
 #   reference_local (the node-local copy of the reference), and
 #   threads_per_job (D4 and BigWig only).
 #
-# What the driver must also pass to snakemake, because Snakemake schedules by
-# the threads and resources the rules declare:
-#   --cores      at least max(CORES, JOBS * threads_per_job). Each D4 or BigWig
-#                job declares threads_per_job, so with fewer cores fewer than
-#                JOBS jobs run at once. (The guard below checks the CORES part.)
-#   --resources  pack=JOBS bench=1
-#                pack=JOBS caps the number of D4 or BigWig jobs running at
-#                once. bench=1 keeps the timed scans one at a time.
-# The CPUs really available stay at 256: the Slurm step the driver runs
-# snakemake in is pinned to 256 cores. --cores and the thread counts only
-# decide how many jobs Snakemake starts.
+# Snakemake schedules by the threads each rule declares, so the driver passes
+# --cores like this:
+#   D4 and BigWig build   --cores JOBS * THREADS. Each per-sample job declares
+#                         THREADS (threads_per_job), so Snakemake runs exactly
+#                         JOBS of them at once.
+#   PBZ build, scans      --cores <cores> (the config's `cores`).
+#   scans                 --resources bench=1, so the timed scans run one at a
+#                         time.
+# The PBZ import and every scan declare threads = cores, and their shell starts
+# with `test {threads} -eq <cores>`. If Snakemake ever lowered their threads
+# (because --cores was too small), the rule fails instead of running a timed
+# command with fewer threads.
+#
+# The build is timed from outside by the driver, with timed_trials.py. The scans
+# time themselves with the same tool, inside the rules. The one step timed
+# inside a workflow is D4's merge (see d4.smk).
 
 import sys
 from pathlib import Path
@@ -39,10 +44,6 @@ def from_root(path):
 CFG = {key: from_root(value) if key in PATH_KEYS else value for key, value in config.items()}
 CORES = int(CFG["cores"])
 RESULTS = CFG["results"]
-
-# Every timed command must really get CORES threads.
-if workflow.cores < CORES:
-    raise ValueError(f"--cores must be at least {CORES}")
 
 # The first n_samples manifest samples, in order, one per line.
 with open(CFG["samples_file"]) as handle:
@@ -65,10 +66,24 @@ D4_FILE = "data/cohort.d4"
 BIGWIGS = [f"data/{sample}.bw" for sample in SAMPLES]
 
 
-def TIMED(command, timefile):
-    """Wrap one command so /usr/bin/time writes wall s, user s, sys s and max RSS KB.
+# What the scans in all three workflows use. timed_trials.py is the same timing
+# tool the creation benchmark in workflows/create uses; the scan scripts are in
+# the same folder and are used in place.
+CREATE = ROOT / "workflows/create"
+TIMED_TRIALS = str(CREATE / "timed_trials.py")
+PYTHON = sys.executable
+REGIONS_BED = CFG["regions_bed"]
+TRIALS = int(CFG["scan_trials"])
 
-    `sync` is inside the timed command, so the time includes flushing the output
-    to disk. Paths have no spaces, so they are not quoted inside sh -c '...'.
-    """
-    return f"/usr/bin/time -f '%e\\t%U\\t%S\\t%M' -o {timefile} sh -c '{command} && sync'"
+wildcard_constraints:
+    analysis="full_scan|region_scan"
+
+
+# The whole-genome region list for the full scans: every contig, 0 to its length.
+rule full_scan_bed:
+    input:
+        CFG["chrom_sizes"]
+    output:
+        "full_scan.bed"
+    shell:
+        r"""awk 'BEGIN {{OFS="\t"}} $2 > 0 {{print $1, 0, $2}}' {input:q} > {output:q}"""

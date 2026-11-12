@@ -1,0 +1,40 @@
+{
+	"chunk_grid": {
+		"name": "regular",
+		"configuration": {
+			"chunk_shape": [
+				1048576
+			]
+		}
+	},
+	"codecs": [
+		{
+			"name": "sharding_indexed",
+			"configuration": {
+				"chunk_shape": [
+					16384
+				],
+				"codecs": [
+					{
+						"name": "numcodecs.pcodec",
+						"configuration": {
+							"level": 8
+						}
+					}
+				],
+				"index_codecs": [
+					{
+						"name": "bytes",
+						"configuration": {
+							"endian": "little"
+						}
+					},
+					{
+						"name": "crc32c"
+					}
+				],
+				"index_location": "end"
+			}
+		}
+	]
+}

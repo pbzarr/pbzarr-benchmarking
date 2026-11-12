@@ -1,0 +1,17 @@
+# Part 1, ONT DNA: the median-size CRAM of all 1,019 1KG ONT Vienna samples
+# (minimap2 map-ont, hg38 no-alt). The CRAMs were made against the project's own
+# hg38 FASTA, so decoding needs it (see config/cohort-ont.yaml).
+data_type: ont
+manifest: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-ont/1kg-ont.tsv
+alignment: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-ont/hg38/{sample}.hg38.cram
+index: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-ont/hg38/{sample}.hg38.cram.crai
+reference: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-ont/reference/1KG_ONT_VIENNA_hg38.fa
+pbz: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr/target/release/pbz
+pbz_repo: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr
+# n1codecs.json: the 1D single-sample codec (pcodec 8, 1,048,576 shards of 16,384 chunks)
+codecs: n1codecs.json
+results: results/single-ont
+first_n: 1019
+quantiles: [0.5]
+repeats: 3
+threads: {pbz: [1, 4, 16, 64], mosdepth: [1, 4, 16, 64], d4tools: [1, 4, 16, 64], megadepth: [1, 4, 16, 64]}

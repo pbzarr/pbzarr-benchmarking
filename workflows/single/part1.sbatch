@@ -6,73 +6,34 @@
 #SBATCH --exclusive
 #SBATCH --mem=1450000M
 #SBATCH --time=2-00:00:00
-#SBATCH --output=results/single/logs/part1-%j.log
+#SBATCH --output=results/logs/part1-%j.log
 
-# Part 1: time creating one depth track from one CRAM, for PBZ, D4 and BigWig.
-# Submit from the repo root, after creating results/single/logs. To run the
-# smoke test instead: CONFIG=config/single-smoke.yaml sbatch workflows/single/part1.sbatch
+# Part 1: time creating one depth track from one alignment file with each tool,
+# then check where the tools agree. One config per data type. Submit from the
+# repo root:
+#   sbatch workflows/single/part1.sbatch config/single-ont.yaml
 # If the job dies, submit it again: runs that already have a result file are skipped.
-# The job asks for 1450000M, not --mem=0: all of rw244's memory (1532000M) is above
-# the account's group limit (1487.5G), so Slurm rejects --mem=0 with AssocGrpMemLimit.
-# --exclusive still gives the job the whole node.
+# (--mem=0 would ask for more memory than the account may use, so Slurm would
+# reject it. --exclusive still gives the job the whole node.)
 
 set -euo pipefail
+CONFIG=${1:?usage: part1.sbatch CONFIG}
 
 R=/scratch/ucgd/lustre-labs/vollger/users/cade/pbzarr-benchmarking
 cd "$R"
 export PATH="$R/.pixi/envs/default/bin:$PATH"
-CONFIG=${CONFIG:-config/single.yaml}
 
-# Read one value from the config file.
-config_value() {
-    python -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))[sys.argv[2]])' "$CONFIG" "$1"
-}
-RESULTS=$(config_value results)
-PBZ_REPO=$(config_value pbz_repo)
-CODECS=$(config_value codecs)
-PBZ=$(config_value pbz)
-
+RESULTS=$(yq .results "$CONFIG")
 mkdir -p "$RESULTS"
-
-# The end of context.txt, with the exit status, whether the job finished or failed.
-finish() {
-    local status=$?
-    echo "end: $(date -Is) (exit status $status)" >> "$RESULTS/context.txt" || true
-}
-trap finish EXIT
-
-# Record what ran, where and with which versions. context.txt is appended to, so
-# a job submitted again adds a block. config.yaml is a copy of the config file; if
-# the file changed, the old copy is kept as config.yaml.~1~.
-cmp -s "$CONFIG" "$RESULTS/config.yaml" || cp --backup=numbered "$CONFIG" "$RESULTS/config.yaml" || true
+# A copy of the config. If it changed since the last job, the old copy is kept
+# as config.yaml.~1~.
+cmp -s "$CONFIG" "$RESULTS/config.yaml" || cp --backup=numbered "$CONFIG" "$RESULTS/config.yaml"
 {
-    echo "start: $(date -Is)"
-    echo "hostname: $(hostname)"
-    echo "slurm job id: $SLURM_JOB_ID"
-    echo "config: $CONFIG (copied to config.yaml)"
-    echo "pbz commit: $(git -C "$PBZ_REPO" rev-parse --short HEAD || true)"
-    echo "pbz version: $("$PBZ" --version || true)"
-    echo "pbz binary: $(sha256sum "$PBZ" || true)"
-    echo "codecs: $(sha256sum "$CODECS" || true)"
-    echo "ulimit -n: $(ulimit -n || true)"
-    echo "ulimit -u: $(ulimit -u || true)"
-    echo "tool versions:"
-    ls "$R/.pixi/envs/default/conda-meta" | grep -E '^(mosdepth|d4tools|megadepth|htslib)-' || true
-    echo "python packages:"
-    python -c '
-import importlib.metadata
-for name in ("pyd4", "pbzarr", "zarr", "dask"):
-    try:
-        print(f"{name} {importlib.metadata.version(name)}")
-    except Exception as error:
-        print(f"{name} unknown ({error})")
-' || true
-    echo "squeue:"
-    squeue -w "$(hostname)" || true
-    echo "lscpu:"
-    lscpu || true
+    echo "start: $(date -Is) on $(hostname), Slurm job $SLURM_JOB_ID"
+    echo "pbz: $($(yq .pbz "$CONFIG") --version)"
+    echo "pbz commit: $(git -C "$(yq .pbz_repo "$CONFIG")" rev-parse --short HEAD)"
+    ls .pixi/envs/default/conda-meta | grep -E '^(mosdepth|d4tools|megadepth|htslib)-'
 } >> "$RESULTS/context.txt"
 
 snakemake -s workflows/single/Snakefile --configfile "$CONFIG" \
-    --directory "${TMPDIR:?TMPDIR is not set}/single" --cores 256 \
-    --resources bench=1 --keep-going
+    --directory "$TMPDIR/single" --cores 256 --resources bench=1 --keep-going

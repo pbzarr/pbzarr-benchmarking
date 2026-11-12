@@ -1,7 +1,9 @@
+# Part 1, short read: the median-size CRAM of the first 1,024 1KG high-coverage samples.
+data_type: short-read
 manifest: config/1kg-sr.tsv
-crams_dir: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-high-coverage/crams
+alignment: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-high-coverage/crams/{sample}.final.cram
+index: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-high-coverage/crams/{sample}.final.cram.crai
 reference: /scratch/ucgd/lustre-labs/vollger/assemblies/GRCh38_full_analysis_set_plus_decoy_hla.fa
-chrom_sizes: /scratch/ucgd/lustre-labs/vollger/assemblies/GRCh38_full_analysis_set_plus_decoy_hla.chrom.sizes
 pbz: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr/target/release/pbz
 pbz_repo: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr
 # n1codecs.json: the 1D single-sample codec (pcodec 8, 1,048,576 shards of 16,384 chunks)
@@ -10,4 +12,4 @@ results: results/single
 first_n: 1024
 quantiles: [0.5]
 repeats: 3
-threads: {pbz: [1, 4, 16, 64], mosdepth: [1, 4, 16, 64], megadepth: [1, 4, 16, 64]}
+threads: {pbz: [1, 4, 16, 64], mosdepth: [1, 4, 16, 64], d4tools: [1, 4, 16, 64], megadepth: [1, 4, 16, 64]}

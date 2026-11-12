@@ -1,5 +1,6 @@
-# Part 1: time creating one depth track from one CRAM, for PBZ, mosdepth (D4)
-# and Megadepth (BigWig), at several thread counts. Run it with part1.sbatch.
+# Part 1: time creating one depth track from one alignment file (CRAM or BAM),
+# for PBZ, mosdepth (D4), d4tools create (D4) and Megadepth (BigWig), at several
+# thread counts. Then check where the tools' depths agree. Run it with part1.sbatch.
 #
 # Each run is one timed command. Runs go one at a time (--resources bench=1).
 # Data goes under the working directory (the job's local $TMPDIR) and is deleted
@@ -20,40 +21,65 @@ def from_root(path):
 
 
 MANIFEST = from_root(config["manifest"])
-CRAMS_DIR = from_root(config["crams_dir"])
-REFERENCE = from_root(config["reference"])
+# Path templates with {sample} for each sample's alignment file and its index.
+ALIGNMENT = from_root(config["alignment"])
+INDEX = from_root(config["index"])
+# BAM input needs no reference: `reference: null`, and the tools get no reference option.
+REFERENCE = from_root(config["reference"]) if config["reference"] else None
 PBZ = from_root(config["pbz"])
 CODECS = from_root(config["codecs"])
 RESULTS = from_root(config["results"])
+DATA_TYPE = config["data_type"]
+# Extra d4tools create options, such as --sparse for RNA, as in the D4 paper.
+D4TOOLS_OPTIONS = config.get("d4tools_options", "")
 EVICT = str(ROOT / "workflows/lib/evict.py")
-REF_LOCAL = "ref/" + Path(REFERENCE).name  # the copy in the working directory
+AGREEMENT = str(ROOT / "workflows/single/agreement.py")
+REF_LOCAL = "ref/reference.fa"  # the copy in the working directory
 THREADS = config["threads"]  # {tool: [thread counts]}
 REPEATS = range(1, config["repeats"] + 1)
+TOOLS = ["pbz", "mosdepth", "d4tools", "megadepth"]
+# The contig the correctness check compares base by base. Every reference has it.
+CHECK_CONTIG = "chr22"
 
 # Every timed command must really get its thread count.
 if workflow.cores < max(max(counts) for counts in THREADS.values()):
     raise ValueError("--cores must be at least the largest thread count in the config")
 
 
-def cram_path(sample):
-    return f"{CRAMS_DIR}/{sample}.final.cram"
+def alignment(sample):
+    return ALIGNMENT.format(sample=sample)
 
 
-# Pick the samples. Sort the first `first_n` manifest samples by CRAM size (ties
-# broken by manifest order) and take the one at each quantile.
+def index(sample):
+    return INDEX.format(sample=sample)
+
+
+# The local reference copy as rule inputs, and a tool's reference option. Both
+# are empty without a reference.
+REF_INPUTS = [REF_LOCAL, REF_LOCAL + ".fai"] if REFERENCE else []
+
+
+def ref_option(option):
+    return f"{option} {REF_LOCAL}" if REFERENCE else ""
+
+
+# Pick the samples. Sort the first `first_n` manifest samples by alignment file
+# size (ties broken by manifest order) and take the one at each quantile.
 with open(MANIFEST) as handle:
     manifest = [row["sample_id"] for row in csv.DictReader(handle, delimiter="\t")]
 by_size = sorted(
-    (os.stat(cram_path(sample)).st_size, order, sample)
+    (os.stat(alignment(sample)).st_size, order, sample)
     for order, sample in enumerate(islice(manifest, config["first_n"]))
 )
 picked = [by_size[round(q * (len(by_size) - 1))] for q in config["quantiles"]]
+# The size of each picked alignment file. It is the `cram_bytes` column even for
+# a BAM, so the rows of every data type line up.
 CRAM_BYTES = {sample: size for size, _, sample in picked}
 
 # One result file per run: tool, sample, threads, repeat.
 ROWS = [
     f"{RESULTS}/runs/{tool}/{sample}/t{threads}/r{repeat}.tsv"
-    for tool in ("pbz", "mosdepth", "megadepth")
+    for tool in TOOLS
     for sample in CRAM_BYTES
     for threads in THREADS[tool]
     for repeat in REPEATS
@@ -74,6 +100,7 @@ rule all:
     input:
         RESULTS + "/runs.tsv",
         RESULTS + "/samples.tsv",
+        expand(RESULTS + "/agreement/{sample}.tsv", sample=CRAM_BYTES),
 
 
 rule samples_table:
@@ -100,20 +127,21 @@ rule collect:
 
 
 # Copy the reference to the local disk once per job. This is not timed.
-rule stage_reference:
-    input:
-        fasta=REFERENCE,
-        fai=REFERENCE + ".fai"
-    output:
-        fasta=REF_LOCAL,
-        fai=REF_LOCAL + ".fai"
-    shell:
-        "cp {input.fasta:q} {output.fasta:q} && cp {input.fai:q} {output.fai:q}"
+if REFERENCE:
+    rule stage_reference:
+        input:
+            fasta=REFERENCE,
+            fai=REFERENCE + ".fai"
+        output:
+            fasta=REF_LOCAL,
+            fai=REF_LOCAL + ".fai"
+        shell:
+            "cp {input.fasta:q} {output.fasta:q} && cp {input.fai:q} {output.fai:q}"
 
 
-# The three run rules do the same steps. Only the timed command and the output
+# The four run rules do the same steps. Only the timed command and the output
 # differ:
-#   1. Drop the CRAM and its index from the page cache, so the read is cold.
+#   1. Drop the alignment file and its index from the page cache, so the read is cold.
 #   2. Time the tool. `sync` is inside the timed command, so the time includes
 #      flushing the output to disk. Paths have no spaces, so they are not quoted
 #      inside sh -c '...'.
@@ -125,10 +153,9 @@ rule stage_reference:
 
 rule run_pbz:
     input:
-        cram=lambda wildcards: cram_path(wildcards.sample),
-        crai=lambda wildcards: cram_path(wildcards.sample) + ".crai",
-        ref=REF_LOCAL,
-        fai=REF_LOCAL + ".fai",
+        alignment=lambda wildcards: alignment(wildcards.sample),
+        index=lambda wildcards: index(wildcards.sample),
+        ref=REF_INPUTS,
         codecs=CODECS
     output:
         RESULTS + "/runs/pbz/{sample}/t{threads}/r{repeat}.tsv"
@@ -138,14 +165,15 @@ rule run_pbz:
     params:
         evict=EVICT,
         pbz=PBZ,
+        reference=ref_option("--reference"),
         data="data/pbz/{sample}/t{threads}/r{repeat}",
         store="data/pbz/{sample}/t{threads}/r{repeat}/{sample}.pbz",
         cram_bytes=lambda wildcards: CRAM_BYTES[wildcards.sample]
     shell:
         r"""
-        python {params.evict} {input.cram} {input.crai}
+        python {params.evict} {input.alignment} {input.index}
         mkdir -p {params.data}
-        /usr/bin/time -f '%e\t%U\t%S\t%M' -o {params.data}/time.txt sh -c '{params.pbz} import bam {input.cram}:{wildcards.sample} --reference {input.ref} --threads {wildcards.threads} --track depth --codecs @{input.codecs} --no-progress -o {params.store} && sync'
+        /usr/bin/time -f '%e\t%U\t%S\t%M' -o {params.data}/time.txt sh -c '{params.pbz} import bam {input.alignment}:{wildcards.sample} {params.reference} --threads {wildcards.threads} --track depth --codecs @{input.codecs} --no-progress -o {params.store} && sync'
         test -s {params.store}
         chunks=$(find {params.store}/depth/values/c -type f | wc -l)
         test "$chunks" -gt 0
@@ -161,10 +189,9 @@ rule run_pbz:
 
 rule run_mosdepth:
     input:
-        cram=lambda wildcards: cram_path(wildcards.sample),
-        crai=lambda wildcards: cram_path(wildcards.sample) + ".crai",
-        ref=REF_LOCAL,
-        fai=REF_LOCAL + ".fai"
+        alignment=lambda wildcards: alignment(wildcards.sample),
+        index=lambda wildcards: index(wildcards.sample),
+        ref=REF_INPUTS
     output:
         RESULTS + "/runs/mosdepth/{sample}/t{threads}/r{repeat}.tsv"
     threads: lambda wildcards: int(wildcards.threads)
@@ -172,15 +199,16 @@ rule run_mosdepth:
         bench=1
     params:
         evict=EVICT,
+        reference=ref_option("--fasta"),
         data="data/mosdepth/{sample}/t{threads}/r{repeat}",
         prefix="data/mosdepth/{sample}/t{threads}/r{repeat}/{sample}",
         d4="data/mosdepth/{sample}/t{threads}/r{repeat}/{sample}.per-base.d4",
         cram_bytes=lambda wildcards: CRAM_BYTES[wildcards.sample]
     shell:
         r"""
-        python {params.evict} {input.cram} {input.crai}
+        python {params.evict} {input.alignment} {input.index}
         mkdir -p {params.data}
-        /usr/bin/time -f '%e\t%U\t%S\t%M' -o {params.data}/time.txt sh -c 'mosdepth -t {wildcards.threads} --fasta {input.ref} --d4 {params.prefix} {input.cram} && sync'
+        /usr/bin/time -f '%e\t%U\t%S\t%M' -o {params.data}/time.txt sh -c 'mosdepth -t {wildcards.threads} {params.reference} --d4 {params.prefix} {input.alignment} && sync'
         test -s {params.d4}
         bytes=$(du -sb {params.d4} | cut -f1)
         files=$(find {params.d4} -type f | wc -l)
@@ -192,12 +220,48 @@ rule run_mosdepth:
         """
 
 
+# d4tools create gets the read filters of the other tools: MAPQ 0 and up, and no
+# reads with any flag in 1796 (unmapped, secondary, QC fail, duplicate). Its own
+# defaults are MAPQ 60 and up and no flag filter. ~1796 is in double quotes so
+# the shell does not read ~ as a home directory.
+rule run_d4tools:
+    input:
+        alignment=lambda wildcards: alignment(wildcards.sample),
+        index=lambda wildcards: index(wildcards.sample),
+        ref=REF_INPUTS
+    output:
+        RESULTS + "/runs/d4tools/{sample}/t{threads}/r{repeat}.tsv"
+    threads: lambda wildcards: int(wildcards.threads)
+    resources:
+        bench=1
+    params:
+        evict=EVICT,
+        reference=ref_option("-r"),
+        options=D4TOOLS_OPTIONS,
+        data="data/d4tools/{sample}/t{threads}/r{repeat}",
+        d4="data/d4tools/{sample}/t{threads}/r{repeat}/{sample}.d4",
+        cram_bytes=lambda wildcards: CRAM_BYTES[wildcards.sample]
+    shell:
+        r"""
+        python {params.evict} {input.alignment} {input.index}
+        mkdir -p {params.data}
+        /usr/bin/time -f '%e\t%U\t%S\t%M' -o {params.data}/time.txt sh -c 'd4tools create -t {wildcards.threads} {params.reference} -q 0 -F "~1796" {params.options} {input.alignment} {params.d4} && sync'
+        test -s {params.d4}
+        bytes=$(du -sb {params.d4} | cut -f1)
+        files=$(find {params.d4} -type f | wc -l)
+        test "$files" -gt 0
+        read wall user sys rss < {params.data}/time.txt
+        printf 'tool\tsample\tthreads\trepeat\tcram_bytes\twall_s\tuser_s\tsys_s\tmax_rss_kb\tout_bytes\tout_files\n' > {output:q}
+        printf 'd4tools\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' {wildcards.sample} {wildcards.threads} {wildcards.repeat} {params.cram_bytes} "$wall" "$user" "$sys" "$rss" "$bytes" "$files" >> {output:q}
+        rm -rf {params.data}
+        """
+
+
 rule run_megadepth:
     input:
-        cram=lambda wildcards: cram_path(wildcards.sample),
-        crai=lambda wildcards: cram_path(wildcards.sample) + ".crai",
-        ref=REF_LOCAL,
-        fai=REF_LOCAL + ".fai"
+        alignment=lambda wildcards: alignment(wildcards.sample),
+        index=lambda wildcards: index(wildcards.sample),
+        ref=REF_INPUTS
     output:
         RESULTS + "/runs/megadepth/{sample}/t{threads}/r{repeat}.tsv"
     threads: lambda wildcards: int(wildcards.threads)
@@ -205,15 +269,16 @@ rule run_megadepth:
         bench=1
     params:
         evict=EVICT,
+        reference=ref_option("--fasta"),
         data="data/megadepth/{sample}/t{threads}/r{repeat}",
         prefix="data/megadepth/{sample}/t{threads}/r{repeat}/{sample}",
         bigwig="data/megadepth/{sample}/t{threads}/r{repeat}/{sample}.all.bw",
         cram_bytes=lambda wildcards: CRAM_BYTES[wildcards.sample]
     shell:
         r"""
-        python {params.evict} {input.cram} {input.crai}
+        python {params.evict} {input.alignment} {input.index}
         mkdir -p {params.data}
-        /usr/bin/time -f '%e\t%U\t%S\t%M' -o {params.data}/time.txt sh -c 'megadepth {input.cram} --fasta {input.ref} --bigwig --filter-out 1796 --threads {wildcards.threads} --prefix {params.prefix} && sync'
+        /usr/bin/time -f '%e\t%U\t%S\t%M' -o {params.data}/time.txt sh -c 'megadepth {input.alignment} {params.reference} --bigwig --filter-out 1796 --threads {wildcards.threads} --prefix {params.prefix} && sync'
         test -s {params.bigwig}
         bytes=$(du -sb {params.bigwig} | cut -f1)
         files=$(find {params.bigwig} -type f | wc -l)
@@ -223,3 +288,96 @@ rule run_megadepth:
         printf 'megadepth\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' {wildcards.sample} {wildcards.threads} {wildcards.repeat} {params.cram_bytes} "$wall" "$user" "$sys" "$rss" "$bytes" "$files" >> {output:q}
         rm -rf {params.data}
         """
+
+
+# The correctness check. Each tool runs once more, untimed, with the options of
+# its timed runs and its largest thread count, and keeps its output until
+# agreement.py has compared them. These jobs take bench=1 too, so they never run
+# beside a timed run.
+
+rule check_pbz:
+    input:
+        alignment=lambda wildcards: alignment(wildcards.sample),
+        index=lambda wildcards: index(wildcards.sample),
+        ref=REF_INPUTS,
+        codecs=CODECS
+    output:
+        temp(directory("check/{sample}/pbz.pbz"))
+    threads: max(THREADS["pbz"])
+    resources:
+        bench=1
+    params:
+        pbz=PBZ,
+        reference=ref_option("--reference")
+    shell:
+        "{params.pbz} import bam {input.alignment}:{wildcards.sample} {params.reference} --threads {threads}"
+        " --track depth --codecs @{input.codecs} --no-progress -o {output}"
+
+
+rule check_mosdepth:
+    input:
+        alignment=lambda wildcards: alignment(wildcards.sample),
+        index=lambda wildcards: index(wildcards.sample),
+        ref=REF_INPUTS
+    output:
+        temp("check/{sample}/mosdepth.per-base.d4")
+    threads: max(THREADS["mosdepth"])
+    resources:
+        bench=1
+    params:
+        reference=ref_option("--fasta"),
+        prefix="check/{sample}/mosdepth"
+    shell:
+        "mosdepth -t {threads} {params.reference} --d4 {params.prefix} {input.alignment}"
+
+
+rule check_d4tools:
+    input:
+        alignment=lambda wildcards: alignment(wildcards.sample),
+        index=lambda wildcards: index(wildcards.sample),
+        ref=REF_INPUTS
+    output:
+        temp("check/{sample}/d4tools.d4")
+    threads: max(THREADS["d4tools"])
+    resources:
+        bench=1
+    params:
+        reference=ref_option("-r"),
+        options=D4TOOLS_OPTIONS
+    shell:
+        "d4tools create -t {threads} {params.reference} -q 0 -F '~1796' {params.options} {input.alignment} {output}"
+
+
+rule check_megadepth:
+    input:
+        alignment=lambda wildcards: alignment(wildcards.sample),
+        index=lambda wildcards: index(wildcards.sample),
+        ref=REF_INPUTS
+    output:
+        temp("check/{sample}/megadepth.all.bw")
+    threads: max(THREADS["megadepth"])
+    resources:
+        bench=1
+    params:
+        reference=ref_option("--fasta"),
+        prefix="check/{sample}/megadepth"
+    shell:
+        "megadepth {input.alignment} {params.reference} --bigwig --filter-out 1796 --threads {threads} --prefix {params.prefix}"
+
+
+# One row for each pair of tools: how many bases of CHECK_CONTIG they cover and
+# how many of those differ in depth.
+rule agreement:
+    input:
+        pbz="check/{sample}/pbz.pbz",
+        mosdepth="check/{sample}/mosdepth.per-base.d4",
+        d4tools="check/{sample}/d4tools.d4",
+        megadepth="check/{sample}/megadepth.all.bw",
+        script=AGREEMENT
+    output:
+        RESULTS + "/agreement/{sample}.tsv"
+    resources:
+        bench=1
+    shell:
+        "python {input.script} {DATA_TYPE} {wildcards.sample} {CHECK_CONTIG} {output}"
+        " pbz={input.pbz} mosdepth={input.mosdepth} d4tools={input.d4tools} megadepth={input.megadepth}"

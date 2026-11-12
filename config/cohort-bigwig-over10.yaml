@@ -1,0 +1,18 @@
+# BigWig alone at 1,024 short-read samples, to time the over10 scan, which the
+# first run (cohort-d4bw-large.yaml, results/cohort-d4bw/n1024/b1) did not have.
+# A job keeps its build only on the node's local disk, so this job builds the
+# 1,024 bigWigs again, and times the build and the other two scans again too.
+manifest: config/1kg-sr.tsv
+alignment: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-high-coverage/crams/{sample}.final.cram
+index: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-high-coverage/crams/{sample}.final.cram.crai
+reference: /scratch/ucgd/lustre-labs/vollger/assemblies/GRCh38_full_analysis_set_plus_decoy_hla.fa
+chrom_sizes: /scratch/ucgd/lustre-labs/vollger/assemblies/GRCh38_full_analysis_set_plus_decoy_hla.chrom.sizes
+regions_bed: random.bed
+pbz: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr/target/release/pbz
+pbz_repo: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr
+codecs: codecs.json
+cores: 256
+results: results/cohort-bigwig-over10
+sample_counts: [1024]
+scan_trials: 3
+tools: [bigwig]

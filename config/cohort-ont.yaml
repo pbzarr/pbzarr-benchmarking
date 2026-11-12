@@ -1,0 +1,21 @@
+# ONT DNA cohort at full size: all 1,019 samples of the 1KG ONT Vienna panel
+# (minimap2 map-ont, hg38 no-alt, 195 contigs).
+# The CRAMs were made against the project's own hg38 FASTA
+# (s3://1kg-ont-vienna/reference/1KG_ONT_VIENNA_hg38.fa.gz, gunzipped and indexed
+# with samtools faidx). It differs from GRCh38_full_analysis_set at 7 contigs, so
+# decoding needs it. chrom_sizes is the first two columns of its .fai.
+# rna_random.bed (10,000 random 10 kb regions) uses only these 195 contigs.
+manifest: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-ont/1kg-ont.tsv
+alignment: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-ont/hg38/{sample}.hg38.cram
+index: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-ont/hg38/{sample}.hg38.cram.crai
+reference: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-ont/reference/1KG_ONT_VIENNA_hg38.fa
+chrom_sizes: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-ont/reference/1KG_ONT_VIENNA_hg38.chrom.sizes
+regions_bed: rna_random.bed
+pbz: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr/target/release/pbz
+pbz_repo: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr
+codecs: codecs.json
+cores: 256
+results: results/cohort-ont
+sample_counts: [1019]
+scan_trials: 3
+tools: [pbz, d4, bigwig]

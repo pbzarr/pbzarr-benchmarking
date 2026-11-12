@@ -1,7 +1,6 @@
 # Cohort workflow for BigWig: one Megadepth run per sample, then the scans.
 #   snakemake -s workflows/cohort/bigwig.smk build   (timed by the driver, with timed_trials.py)
 #   snakemake -s workflows/cohort/bigwig.smk scans   (each scan timed by timed_trials.py)
-# build: --cores JOBS * THREADS. scans: --cores <cores> --resources bench=1.
 # See common.smk.
 
 include: "common.smk"
@@ -10,6 +9,7 @@ wildcard_constraints:
     sample="[^/]+"
 
 BIGWIG_SCAN = str(CREATE / "bigwig_scan.py")
+OVER10_BIGWIG = str(CREATE / "over10_bigwig.py")
 
 
 rule build:
@@ -19,32 +19,32 @@ rule build:
 
 rule scans:
     input:
-        expand(RESULTS + "/scans/bigwig.{analysis}.tsv", analysis=["full_scan", "region_scan"])
+        expand(RESULTS + "/scans/bigwig.{analysis}.tsv", analysis=["full_scan", "region_scan", "over10"])
 
 
-# Each job declares threads_per_job threads, so with --cores JOBS * threads_per_job
-# Snakemake runs JOBS of them at once. Each sample is declared as an output, so a
-# missing file fails the build.
+# Each job declares threads_per_job threads. Each sample is declared as an
+# output, so a missing file fails the build.
 rule megadepth:
     input:
-        cram=lambda wildcards: cram(wildcards.sample),
-        crai=lambda wildcards: cram(wildcards.sample) + ".crai"
+        alignment=lambda wildcards: alignment(wildcards.sample),
+        index=lambda wildcards: index(wildcards.sample)
     output:
         "data/{sample}.bw"
     threads: int(config["threads_per_job"])
     params:
-        reference=REFERENCE,
+        reference=reference_option("--fasta"),
         prefix="data/{sample}"
     shell:
         """
-        megadepth {input.cram:q} --fasta {params.reference:q} --bigwig --filter-out 1796 \
+        megadepth {input.alignment:q} {params.reference} --bigwig --filter-out 1796 \
             --threads {threads} --prefix {params.prefix}
         mv {params.prefix}.all.bw {output:q}
         """
 
 
-# The scans below run the rule bigwig_stat of workflows/create/analysis.smk
-# through the same timed_trials.py, with the same script, used in place. What
+# The scans below run the rules bigwig_stat and bigwig_over10 of
+# workflows/create/analysis.smk through the same timed_trials.py, with the same
+# scripts, used in place. What
 # differs: the data is in the working directory, threads are CORES, the cache is
 # always cold, and trials come from the config.
 #
@@ -55,13 +55,29 @@ rule megadepth:
 # (resources: bench=1), because overlapping jobs evict and refill each other's
 # page cache.
 
-# One pyBigWig scan per sample, run in parallel with CORES processes in total. The
-# cache is controlled for the whole data/ folder, which holds only the .bw files.
+# One pyBigWig scan per sample, one command per line. The full scan reads whole
+# chromosomes from each file's header, so it gets no BED. The commands go in a
+# file because 1024 of them as arguments would pass the 128 KB limit.
+rule bigwig_scan_commands:
+    input:
+        regions=lambda wc: [] if wc.analysis == "full_scan" else [REGIONS_BED]
+    output:
+        "scan/bigwig.{analysis}.commands"
+    run:
+        regions = " ".join(input.regions)
+        with open(output[0], "w") as out:
+            for sample in SAMPLES:
+                out.write(f"{PYTHON} {BIGWIG_SCAN} data/{sample}.bw {regions}"
+                          f" > scan/bigwig.{wildcards.analysis}/{sample}.tsv\n")
+
+
+# xargs runs the command lines, CORES at a time, each with sh -c. The cache is
+# controlled for the whole data/ folder, which holds only the .bw files.
 rule bigwig_stat:
     input:
         bigwigs=BIGWIGS,
+        commands="scan/bigwig.{analysis}.commands",
         scanner=BIGWIG_SCAN,
-        regions=lambda wc: [] if wc.analysis == "full_scan" else [REGIONS_BED],
         timer=TIMED_TRIALS
     output:
         tsv=directory("scan/bigwig.{analysis}"),
@@ -71,32 +87,43 @@ rule bigwig_stat:
         bench=1
     params:
         python=PYTHON,
-        trials=TRIALS,
-        regions=lambda wc: "/dev/null" if wc.analysis == "full_scan" else REGIONS_BED
+        trials=TRIALS
     log:
         "logs/bigwig.{analysis}.log"
     shell:
         r"""
-        test {threads} -eq {CORES}
         mkdir -p {output.tsv:q}
-        scan=$(cat <<'EOF'
-printf '%s\0' {input.bigwigs:q} |
-    xargs -0 -n 1 -P {threads} sh -c '
-        python="$1"
-        scanner="$2"
-        analysis="$3"
-        regions="$4"
-        prefix="$5/$(basename "$6")"
-        if [ "$analysis" = full_scan ]; then
-            "$python" "$scanner" "$6"
-        else
-            "$python" "$scanner" "$6" "$regions"
-        fi > "$prefix.tsv"
-    ' sh {params.python:q} {input.scanner:q} {wildcards.analysis:q} {params.regions:q} \
-        {output.tsv:q}
-EOF
-)
         {params.python:q} {input.timer:q} --data data --cache cold \
             --trials {params.trials} --output {output.bench:q} -- \
-            sh -c "$scan" 2> {log:q}
+            xargs -a {input.commands:q} -d '\n' -n 1 -P {threads} sh -c 2> {log:q}
+        """
+
+
+# Per-base fraction of samples with depth >= 10x (gnomAD's over_10), written as a
+# bigWig by a plain script that uses a multiprocessing pool. Each worker reads one
+# 1 Mb window from every sample's bigWig in turn, so its memory does not grow
+# with N. The sample paths go on the command line (about 20 KB at N = 1024).
+# --before removes the previous trial's output outside the timed window.
+rule bigwig_over10:
+    input:
+        bigwigs=BIGWIGS,
+        script=OVER10_BIGWIG,
+        timer=TIMED_TRIALS
+    output:
+        out="scan/bigwig.over10.bw",
+        bench=RESULTS + "/scans/bigwig.over10.tsv"
+    threads: CORES
+    resources:
+        bench=1
+    params:
+        python=PYTHON,
+        trials=TRIALS
+    log:
+        "logs/bigwig.over10.log"
+    shell:
+        """
+        {params.python:q} {input.timer:q} --data data --cache cold \
+            --trials {params.trials} --output {output.bench:q} --before 'rm -rf {output.out}' -- \
+            {params.python:q} {input.script:q} {output.out:q} {threads} {input.bigwigs:q} \
+            2> {log:q}
         """

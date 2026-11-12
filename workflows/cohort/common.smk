@@ -2,36 +2,28 @@
 # cohort workflows read this file.
 #
 # The batch driver (part2.sbatch) runs one workflow per tool in a working
-# directory on the node's local disk (snakemake --directory). It passes these
-# values with --config, on top of the config file:
-#   n_samples, samples_file, results (this job's results folder), build,
-#   reference_local (the node-local copy of the reference), and
-#   threads_per_job (D4 and BigWig only).
+# directory on the node's local disk (snakemake --directory), always with
+# --cores <cores> (the config's `cores`), and the scans with --resources bench=1
+# so they run one at a time. It passes these values with --config, on top of
+# the config file:
+#   n_samples, samples_file, results (this job's results folder),
+#   reference_local (the node-local copy of the reference; not passed when the
+#   config has `reference: null`), and threads_per_job (D4 and BigWig only).
 #
-# Snakemake schedules by the threads each rule declares, so the driver passes
-# --cores like this:
-#   D4 and BigWig build   --cores JOBS * THREADS. Each per-sample job declares
-#                         THREADS (threads_per_job), so Snakemake runs exactly
-#                         JOBS of them at once.
-#   PBZ build, scans      --cores <cores> (the config's `cores`).
-#   scans                 --resources bench=1, so the timed scans run one at a
-#                         time.
-# The PBZ import and every scan declare threads = cores, and their shell starts
-# with `test {threads} -eq <cores>`. If Snakemake ever lowered their threads
-# (because --cores was too small), the rule fails instead of running a timed
-# command with fewer threads.
+# The PBZ import and every scan declare threads = cores.
 #
 # The build is timed from outside by the driver, with timed_trials.py. The scans
 # time themselves with the same tool, inside the rules. The one step timed
 # inside a workflow is D4's merge (see d4.smk).
 
+import shlex
 import sys
 from pathlib import Path
 
 # Paths in the config file are relative to the repo root (the parent of workflows/).
 ROOT = Path(workflow.basedir).resolve().parents[1]
 PATH_KEYS = [
-    "manifest", "crams_dir", "reference", "chrom_sizes", "regions_bed",
+    "manifest", "alignment", "index", "reference", "chrom_sizes", "regions_bed",
     "pbz", "pbz_repo", "codecs", "results", "samples_file",
 ]
 
@@ -41,7 +33,8 @@ def from_root(path):
     return str(path if path.is_absolute() else ROOT / path)
 
 
-CFG = {key: from_root(value) if key in PATH_KEYS else value for key, value in config.items()}
+CFG = {key: from_root(value) if key in PATH_KEYS and value is not None else value
+       for key, value in config.items()}
 CORES = int(CFG["cores"])
 RESULTS = CFG["results"]
 
@@ -52,13 +45,26 @@ if len(SAMPLES) != int(CFG["n_samples"]):
     raise ValueError(f"{CFG['samples_file']} has {len(SAMPLES)} samples, not n_samples={CFG['n_samples']}")
 
 
-def cram(sample):
-    return f"{CFG['crams_dir']}/{sample}.final.cram"
+# Each sample's alignment file (CRAM or BAM) and its index, from the config's
+# path templates `alignment` and `index`, which contain {sample}.
+def alignment(sample):
+    return CFG["alignment"].format(sample=sample)
+
+
+def index(sample):
+    return CFG["index"].format(sample=sample)
 
 
 # The reference is a plain path, not a rule input: the driver copies it to local
-# disk before the build, and every tool reads that copy.
-REFERENCE = config["reference_local"]
+# disk before the build, and every tool reads that copy. A config with
+# `reference: null` (BAM input, which needs none) has no copy, and the tools get
+# no reference option.
+REFERENCE = config.get("reference_local")
+
+
+def reference_option(option):
+    """`option <reference>` for a tool's command line, or nothing without a reference."""
+    return f"{option} {shlex.quote(REFERENCE)}" if REFERENCE else ""
 
 # Where each tool's build leaves its data, inside the working directory.
 PBZ_STORE = "data/cohort.pbz"

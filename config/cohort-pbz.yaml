@@ -1,0 +1,16 @@
+# PBZ cohort builds, 32-1024 samples (queued 2026-10-23, Cade). D4 and BigWig
+# run from cohort-d4bw*.yaml.
+manifest: config/1kg-sr.tsv
+alignment: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-high-coverage/crams/{sample}.final.cram
+index: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-high-coverage/crams/{sample}.final.cram.crai
+reference: /scratch/ucgd/lustre-labs/vollger/assemblies/GRCh38_full_analysis_set_plus_decoy_hla.fa
+chrom_sizes: /scratch/ucgd/lustre-labs/vollger/assemblies/GRCh38_full_analysis_set_plus_decoy_hla.chrom.sizes
+regions_bed: random.bed
+pbz: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr/target/release/pbz
+pbz_repo: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr
+codecs: codecs.json
+cores: 256
+results: results/cohort-pbz
+sample_counts: [32, 64, 128, 256, 512, 1024]
+scan_trials: 3
+tools: [pbz]

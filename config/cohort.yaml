@@ -1,5 +1,6 @@
 manifest: config/1kg-sr.tsv
-crams_dir: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-high-coverage/crams
+alignment: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-high-coverage/crams/{sample}.final.cram
+index: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-high-coverage/crams/{sample}.final.cram.crai
 reference: /scratch/ucgd/lustre-labs/vollger/assemblies/GRCh38_full_analysis_set_plus_decoy_hla.fa
 chrom_sizes: /scratch/ucgd/lustre-labs/vollger/assemblies/GRCh38_full_analysis_set_plus_decoy_hla.chrom.sizes
 regions_bed: random.bed
@@ -9,14 +10,5 @@ codecs: codecs.json
 cores: 256
 results: results/cohort
 sample_counts: [32, 64, 128, 256, 512, 1024]
-noise_check: {n: 256, builds: 3}
 scan_trials: 3
-# Each tool's scans in a part 2 job stop after this many hours (see part2.sbatch).
-scan_timeout_hours: 16
 tools: [pbz, d4, bigwig]
-disk_per_sample_gb: 6
-# D4 and BigWig builds with N >= cores: threads per job and jobs at once. Set by
-# hand from part 1's results (results/single/runs.tsv). Below that, part2.sbatch
-# runs N jobs of floor(cores / N) threads. Left null, part2.sbatch refuses to
-# start a build that needs them.
-packing: {d4: {threads: null, jobs: null}, bigwig: {threads: null, jobs: null}}

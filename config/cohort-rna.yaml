@@ -1,0 +1,19 @@
+# ONT direct-RNA cohort at full size: all 60 samples (minimap2 -ax splice, hg19
+# with chr names, 26 contigs; EBV is gi|82503188|ref|NC_007605.1|).
+# BAM input needs no reference, so the tools get no reference option.
+# chrom_sizes is the BAMs' @SQ lines (the same in all 60). hg19_random.bed:
+#   bedtools random -l 10000 -n 10000 -seed 1 -g <chrom_sizes>
+manifest: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-rna-ont/1kg-rna-ont.tsv
+alignment: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-rna-ont/data/sorted_alignment_{sample}.bam
+index: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-rna-ont/data/sorted_alignment_{sample}.bam.bai
+reference: null
+chrom_sizes: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-rna-ont/hg19.chrom.sizes
+regions_bed: hg19_random.bed
+pbz: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr/target/release/pbz
+pbz_repo: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr
+codecs: codecs.json
+cores: 256
+results: results/cohort-rna
+sample_counts: [60]
+scan_trials: 3
+tools: [pbz, d4, bigwig]

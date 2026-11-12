@@ -1,7 +1,6 @@
 # Cohort workflow for PBZ: one `pbz import` over all samples, then the scans.
 #   snakemake -s workflows/cohort/pbz.smk build   (timed by the driver, with timed_trials.py)
 #   snakemake -s workflows/cohort/pbz.smk scans   (each scan timed by timed_trials.py)
-# --cores is the config's `cores` for both; the scans also need --resources bench=1.
 # See common.smk.
 
 include: "common.smk"
@@ -20,9 +19,9 @@ rule scans:
         expand(RESULTS + "/scans/pbz.{analysis}.tsv", analysis=["full_scan", "region_scan", "over10"])
 
 
-# The sources go in a file because 1024 CRAM paths as arguments would nearly fill
-# the 128 KB limit on one command-line argument. One line per sample, in
-# manifest order: the CRAM path, a tab, the sample name. The file is outside
+# The sources go in a file because 1024 alignment paths as arguments would nearly
+# fill the 128 KB limit on one command-line argument. One line per sample, in
+# manifest order: the alignment path, a tab, the sample name. The file is outside
 # data/ so it does not count towards the output size.
 rule sources:
     output:
@@ -30,7 +29,7 @@ rule sources:
     run:
         with open(output[0], "w") as out:
             for sample in SAMPLES:
-                out.write(f"{cram(sample)}\t{sample}\n")
+                out.write(f"{alignment(sample)}\t{sample}\n")
 
 
 # One process imports every sample, in file order, at CORES threads.
@@ -38,19 +37,18 @@ rule sources:
 rule import:
     input:
         sources="sources.tsv",
-        crams=[cram(sample) for sample in SAMPLES],
-        crais=[cram(sample) + ".crai" for sample in SAMPLES],
+        alignments=[alignment(sample) for sample in SAMPLES],
+        indexes=[index(sample) for sample in SAMPLES],
         codecs=CFG["codecs"]
     output:
         directory(PBZ_STORE)
     threads: CORES
     params:
         pbz=CFG["pbz"],
-        reference=REFERENCE
+        reference=reference_option("--reference")
     shell:
         """
-        test {threads} -eq {CORES}
-        {params.pbz:q} import bam --file-list {input.sources:q} --reference {params.reference:q} \
+        {params.pbz:q} import bam --file-list {input.sources:q} {params.reference} \
             --threads {threads} --track depth -c sample --codecs @{input.codecs:q} \
             --no-progress -o {output:q}
         """
@@ -87,7 +85,6 @@ rule pbz_stat:
         "logs/pbz.{analysis}.log"
     shell:
         """
-        test {threads} -eq {CORES}
         {params.python:q} {input.timer:q} --data {input.store:q} --cache cold \
             --trials {params.trials} --output {output.bench:q} -- \
             {params.pbz:q} stat {input.store:q} depth \
@@ -119,9 +116,10 @@ rule pbz_over10:
         "logs/pbz.over10.log"
     shell:
         """
-        test {threads} -eq {CORES}
-        # over10_pbz.py imports the proposed-API shim as pbzarr
+        # over10_pbz.py imports the proposed-API shim as pbzarr. The malloc tunables let
+        # glibc reuse freed chunk buffers instead of mmapping fresh pages for each one.
         PYTHONPATH={params.proposed_api:q} \
+        GLIBC_TUNABLES=glibc.malloc.mmap_threshold=33554432:glibc.malloc.trim_threshold=17179869184 \
         {params.python:q} {input.timer:q} --data {input.store:q} --cache cold \
             --trials {params.trials} --output {output.bench:q} --before 'rm -rf {output.out}' -- \
             {params.python:q} {input.script:q} {input.store:q} {output.out:q} {threads} \

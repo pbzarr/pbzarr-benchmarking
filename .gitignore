@@ -10,3 +10,9 @@ __pycache__/
 # OS and agent scratch
 .DS_Store
 .superpowers/
+
+# figure outputs (regenerate with figures/*.py)
+/figures/**/*.png
+/figures/**/*.svg
+/figures/**/*.ai
+/figures/archive/

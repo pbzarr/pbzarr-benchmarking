@@ -1,0 +1,12 @@
+# pixi environments
+.pixi/*
+!.pixi/config.toml
+
+# benchmark results
+/results/
+/build/
+__pycache__/
+
+# OS and agent scratch
+.DS_Store
+.superpowers/

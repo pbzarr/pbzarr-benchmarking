@@ -1,0 +1,14 @@
+font.family: Arial
+font.size: 7
+axes.titlesize: 7
+xtick.labelsize: 6
+ytick.labelsize: 6
+axes.linewidth: 0.6
+xtick.major.width: 0.6
+ytick.major.width: 0.6
+xtick.major.size: 2.5
+ytick.major.size: 2.5
+axes.spines.top: False
+axes.spines.right: False
+svg.fonttype: none
+savefig.dpi: 300

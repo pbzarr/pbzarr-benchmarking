@@ -1,38 +1,17 @@
-#!/usr/bin/env python3
-"""Figure S3, building the largest cohort of each data type.
-
-Top row: wall time of the build. Bottom row: peak memory. One column per data
-type, each with its own y axis. The lowest bar's label is bold.
-
-Peak memory is the resident memory summed over all processes of the build. For
-D4 it includes the output file that each mosdepth process maps into memory.
-
-Reads the builds.tsv files in results/ and writes figures/figureS3.png and .svg
-at print size (180 mm wide). Run from the repo root:
-    pixi run python figures/figureS3.py
-"""
+"""Figure S3: wall time and peak memory of building the largest cohort of each data type."""
 
 from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.patches import Patch
 
-ROOT = Path(__file__).resolve().parent.parent
-RESULTS = ROOT / "results"
-# As in figures 2 and 3: BigWig, D4, PBZ, with PBZ the vibrant color.
+HERE = Path(__file__).resolve().parent
+RESULTS = HERE.parents[1] / "results"
+OUT = HERE / "plots"
+plt.style.use(HERE.parent / "paper.mplstyle")
 TOOLS = {"bigwig": ("BigWig", "#9CC9C0"), "d4": ("D4", "#A7BEDB"), "pbz": ("PBZ", "#C0304F")}
 INK = "#444"
-
-plt.rcParams.update({
-    "font.family": "Arial", "font.size": 7, "axes.titlesize": 7, "xtick.labelsize": 6, "ytick.labelsize": 6,
-    "axes.linewidth": 0.6, "xtick.major.width": 0.6, "ytick.major.width": 0.6,
-    "xtick.major.size": 2.5, "ytick.major.size": 2.5,
-    "axes.spines.top": False, "axes.spines.right": False,
-    "svg.fonttype": "none",
-})
 
 
 def read(*files):
@@ -69,5 +48,6 @@ for ax, text in zip(axes[:, 0], "AB"):
     ax.text(-0.25, 1.08, text, transform=ax.transAxes, fontsize=10, weight="bold")
 fig.legend([Patch(color=color) for _, color in TOOLS.values()], [name for name, _ in TOOLS.values()],
            loc="outside upper center", ncol=3, frameon=False)
-fig.savefig(ROOT / "figures" / "figureS3.png", dpi=300)
-fig.savefig(ROOT / "figures" / "figureS3.svg")
+OUT.mkdir(exist_ok=True)
+for ext in ("svg", "png"):
+    fig.savefig(OUT / f"figureS3.{ext}")

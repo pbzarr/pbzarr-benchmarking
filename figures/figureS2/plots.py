@@ -1,38 +1,18 @@
-#!/usr/bin/env python3
-"""Figure S2, what a short-read build costs.
-
-A: total CPU time of the build over cohort size.
-B: CPU time per sample over cohort size.
-C: D4's wall time, split into the per-sample mosdepth phase and d4tools merge.
-
-Lines and bars are the median of the builds at each N (N = 256 has 3 builds).
-Reads the builds.tsv and merge.tsv files in results/ and writes
-figures/figureS2.png and .svg at print size (180 mm wide). Run from the repo root:
-    pixi run python figures/figureS2.py
-"""
+"""Figure S2: short-read build cost. Total CPU time, CPU time per sample, and D4's wall time split into mosdepth and merge."""
 
 from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.patches import Patch
 
-ROOT = Path(__file__).resolve().parent.parent
-RESULTS = ROOT / "results"
-# As in figures 2 and 3: BigWig, D4, PBZ, with PBZ the vibrant color.
+HERE = Path(__file__).resolve().parent
+RESULTS = HERE.parents[1] / "results"
+OUT = HERE / "plots"
+plt.style.use(HERE.parent / "paper.mplstyle")
 TOOLS = {"bigwig": ("BigWig", "#9CC9C0"), "d4": ("D4", "#A7BEDB"), "pbz": ("PBZ", "#C0304F")}
 D4_DARK = "#4A6E9C"
 INK = "#444"
-
-plt.rcParams.update({
-    "font.family": "Arial", "font.size": 7, "axes.titlesize": 7, "xtick.labelsize": 6, "ytick.labelsize": 6,
-    "axes.linewidth": 0.6, "xtick.major.width": 0.6, "ytick.major.width": 0.6,
-    "xtick.major.size": 2.5, "ytick.major.size": 2.5,
-    "axes.spines.top": False, "axes.spines.right": False,
-    "svg.fonttype": "none",
-})
 
 
 def read(pattern):
@@ -83,5 +63,6 @@ for ax, text in zip((a, b, c), "ABC"):
     ax.text(-0.2, 1.08, text, transform=ax.transAxes, fontsize=10, weight="bold")
 fig.legend([Patch(color=color) for _, color in TOOLS.values()], [name for name, _ in TOOLS.values()],
            loc="outside upper center", ncol=3, frameon=False)
-fig.savefig(ROOT / "figures" / "figureS2.png", dpi=300)
-fig.savefig(ROOT / "figures" / "figureS2.svg")
+OUT.mkdir(exist_ok=True)
+for ext in ("svg", "png"):
+    fig.savefig(OUT / f"figureS2.{ext}")

@@ -1,41 +1,20 @@
-#!/usr/bin/env python3
-"""Figure S4, how much data each scan reads from disk (short read).
-
-A: data read by the whole-genome scan over cohort size.
-B: data read by the region scan over cohort size (log scale).
-C: the share of the cohort's files that each scan reads at N = 1,024.
-
-Every scan starts with a cold page cache, so the data read is what the scan
-needs from disk. Values are the median of 3 trials.
-
-Reads the scans/*.tsv and builds.tsv files in results/ and writes
-figures/figureS4.png and .svg at print size (180 mm wide). Run from the repo root:
-    pixi run python figures/figureS4.py
-"""
+"""Figure S4: how much data each short-read scan reads from disk, from a cold page cache."""
 
 import re
 from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.patches import Patch
 
-ROOT = Path(__file__).resolve().parent.parent
-RESULTS = ROOT / "results"
-# As in figures 2 and 3: BigWig, D4, PBZ, with PBZ the vibrant color.
+HERE = Path(__file__).resolve().parent
+RESULTS = HERE.parents[1] / "results"
+OUT = HERE / "plots"
+plt.style.use(HERE.parent / "paper.mplstyle")
 TOOLS = {"bigwig": ("BigWig", "#9CC9C0"), "d4": ("D4", "#A7BEDB"), "pbz": ("PBZ", "#C0304F")}
 SCANS = {"full_scan": "Whole genome", "region_scan": "10,000 regions"}
 INK = "#444"
 
-plt.rcParams.update({
-    "font.family": "Arial", "font.size": 7, "axes.titlesize": 7, "xtick.labelsize": 6, "ytick.labelsize": 6,
-    "axes.linewidth": 0.6, "xtick.major.width": 0.6, "ytick.major.width": 0.6,
-    "xtick.major.size": 2.5, "ytick.major.size": 2.5,
-    "axes.spines.top": False, "axes.spines.right": False,
-    "svg.fonttype": "none",
-})
 
 # One row per scan: N, tool, scan and the GB read (io_in is in MiB).
 rows = []
@@ -88,5 +67,6 @@ for ax, text in zip((a, b, c), "ABC"):
     ax.text(-0.2, 1.08, text, transform=ax.transAxes, fontsize=10, weight="bold")
 fig.legend([Patch(color=color) for _, color in TOOLS.values()], [name for name, _ in TOOLS.values()],
            loc="outside upper center", ncol=3, frameon=False)
-fig.savefig(ROOT / "figures" / "figureS4.png", dpi=300)
-fig.savefig(ROOT / "figures" / "figureS4.svg")
+OUT.mkdir(exist_ok=True)
+for ext in ("svg", "png"):
+    fig.savefig(OUT / f"figureS4.{ext}")

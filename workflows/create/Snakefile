@@ -1,0 +1,98 @@
+from pathlib import Path
+
+
+SAMPLE_COUNTS = [4,32,64,128]
+THREAD_COUNTS = [16,32,64]
+REPLICATES = list(range(1, 6))  # Creation trials; only r1 data is kept
+ANALYSIS_REPLICATES = [1,2,3]  # All scan the files from creation replicate 1
+CACHE_MODES = ["cold", "warm"]  # Each scan job times analysis_trials runs per mode
+
+configfile: str(Path(workflow.basedir).resolve().parents[1] / "config/1kg-sr.yaml")
+include: "samples.smk"
+
+DATASET_CONFIG = str(Path(workflow.configfiles[0]).resolve())
+RESULTS = str(ROOT / "results" / config["dataset"])
+
+ANALYSIS_TARGETS = expand(
+    RESULTS + "/{tool}/t{threads}/n{n_samples}/r{replicate}/benchmarks/{analysis}.{cache}.tsv",
+    tool=["pbz", "d4"],
+    threads=THREAD_COUNTS,
+    n_samples=SAMPLE_COUNTS,
+    replicate=ANALYSIS_REPLICATES,
+    analysis=["full_scan", "region_scan"],
+    cache=CACHE_MODES,
+) + expand(  # over10 is timed cold only
+    RESULTS + "/{tool}/t{threads}/n{n_samples}/r{replicate}/benchmarks/over10.cold.tsv",
+    tool=["pbz", "d4"],
+    threads=THREAD_COUNTS,
+    n_samples=SAMPLE_COUNTS,
+    replicate=ANALYSIS_REPLICATES,
+)
+
+
+rule all:
+    input:
+        expand(
+            RESULTS + "/{tool}/t{threads}/n{n_samples}/r{replicate}/disk.tsv",
+            tool=["pbz", "d4", "bigwig"],
+            threads=THREAD_COUNTS,
+            n_samples=SAMPLE_COUNTS,
+            replicate=REPLICATES,
+        ),
+        ANALYSIS_TARGETS
+
+
+rule analyses:
+    input:
+        ANALYSIS_TARGETS
+
+
+rule create:
+    wildcard_constraints:
+        replicate="1"
+    input:
+        workflow=lambda wc: str(WORKFLOW_DIR / f"{wc.tool}.smk"),
+        config=DATASET_CONFIG,
+        sample_rules=str(WORKFLOW_DIR / "samples.smk"),
+        dictionary=lambda wc: [str(WORKFLOW_DIR / "d4-zero.dict")] if wc.tool == "d4" else [],
+        manifest=MANIFEST,
+        alignments=lambda wc: [s["alignment"] for s in selected_samples(wc.n_samples)],
+        indexes=lambda wc: [s["index"] for s in selected_samples(wc.n_samples)],
+        reference=REFERENCE,
+        reference_index=REFERENCE_INDEX,
+        chrom_sizes=CHROM_SIZES
+    output:
+        directory(RESULTS + "/{tool}/t{threads}/n{n_samples}/r{replicate}/data")
+    threads: lambda wc: int(wc.threads)
+    params:
+        workdir=RESULTS + "/{tool}/t{threads}/n{n_samples}/r{replicate}"
+    benchmark: RESULTS + "/{tool}/t{threads}/n{n_samples}/r{replicate}/benchmark.tsv"
+    log: RESULTS + "/{tool}/t{threads}/n{n_samples}/r{replicate}/create.log"
+    shell:
+        """
+        test {threads} -eq {wildcards.threads}
+        snakemake -s {input.workflow:q} --cores {threads} \
+            --directory {params.workdir:q} --forceall \
+            --configfile {input.config:q} --config n_samples={wildcards.n_samples} \
+            > {log:q} 2>&1
+        """
+
+
+# Replicates beyond r1 only feed disk.tsv, so their data is deleted afterwards.
+use rule create as create_temp with:
+    wildcard_constraints:
+        replicate=r"[2-9]|[1-9]\d+"
+    output:
+        temp(directory(RESULTS + "/{tool}/t{threads}/n{n_samples}/r{replicate}/data"))
+
+
+rule disk_usage:
+    input:
+        RESULTS + "/{tool}/t{threads}/n{n_samples}/r{replicate}/data"
+    output:
+        RESULTS + "/{tool}/t{threads}/n{n_samples}/r{replicate}/disk.tsv"
+    shell:
+        "du -sk {input:q} > {output:q}"
+
+
+include: "analysis.smk"

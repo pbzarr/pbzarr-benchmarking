@@ -1,0 +1,6 @@
+dataset: 1kg-sr
+manifest: config/1kg-sr.tsv
+reference: /tmp/cade/GRCh38_full_analysis_set_plus_decoy_hla.fa
+reference_index: /tmp/cade/GRCh38_full_analysis_set_plus_decoy_hla.fa.fai
+chrom_sizes: /tmp/cade/GRCh38_full_analysis_set_plus_decoy_hla.chrom.sizes
+regions_bed: /scratch/ucgd/lustre-labs/vollger/users/cade/pbzarr-benchmarking/random.bed

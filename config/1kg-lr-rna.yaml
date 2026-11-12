@@ -1,0 +1,6 @@
+dataset: 1kg-rna-ont
+manifest: config/1kg-rna-ont.tsv
+reference: /scratch/ucgd/lustre-labs/vollger/assemblies/hg38.analysisSet.fa
+reference_index: /scratch/ucgd/lustre-labs/vollger/assemblies/hg38.analysisSet.fa.fai
+chrom_sizes: /scratch/ucgd/lustre-labs/vollger/assemblies/hg38.analysisSet.chrom.sizes
+regions_bed: /scratch/ucgd/lustre-labs/vollger/users/cade/pbzarr-benchmarking/rna_random.bed

@@ -145,16 +145,19 @@ on the exclusive node rw244 and has two parts, each with its own workflows,
 configs and batch scripts. The design is in
 `docs/superpowers/specs/2026-10-20-creation-benchmark-design.md`.
 
-- **Part 1** (`workflows/single/`, config `config/single.yaml`) times making
-  one depth track from one CRAM, for PBZ, mosdepth (D4) and Megadepth
-  (BigWig), at several thread counts. Start it with
-  `sbatch workflows/single/part1.sbatch`.
+- **Part 1** (`workflows/single/`) times making one depth track from one
+  alignment file, for PBZ, mosdepth (D4), d4tools create (D4) and Megadepth
+  (BigWig), at several thread counts, then checks where the tools' depths
+  agree. One config per data type: `config/single.yaml` (short read),
+  `config/single-ont.yaml` and `config/single-rna.yaml`. Submit one job per
+  config with `sbatch workflows/single/part1.sbatch CONFIG`.
 - **Part 2** (`workflows/cohort/`, config `config/cohort.yaml`) builds one
   cohort store from the first N manifest samples, once for each tool, and runs
   the cold scans on it. There is one workflow per tool (`pbz.smk`, `d4.smk`,
   `bigwig.smk`, which share `common.smk`), each with a `build` target and a
-  `scans` target. Start it with `bash workflows/cohort/submit_part2.sh`, or
-  one job at a time with `sbatch workflows/cohort/part2.sbatch N BUILD`.
+  `scans` target. One config per dataset (`config/cohort*.yaml`). Submit one
+  job with `sbatch workflows/cohort/part2.sbatch CONFIG N`, or one job for each
+  of the config's `sample_counts` with `workflows/cohort/submit_part2.sh CONFIG`.
 - `workflows/lib/evict.py` drops files from the page cache. Both parts use it.
 
 Run everything from the cluster checkout,
@@ -162,48 +165,41 @@ Run everything from the cluster checkout,
 not create the log folders, so create them once:
 
 ```sh
-mkdir -p results/single/logs results/single-smoke/logs results/cohort/logs results/cohort-smoke/logs
+mkdir -p results/logs
 ```
 
 ### How things are measured
 
 - **Part 1:** each run is one command inside `/usr/bin/time -f '%e\t%U\t%S\t%M'`,
-  with `sync` in the timed command. The CRAM and its index are dropped from the
-  page cache first. The row in `runs.tsv` has wall, user and system seconds,
-  peak RSS in KB, and the size and file count of the output.
+  with `sync` in the timed command. The alignment file and its index are dropped
+  from the page cache first. The row in `runs.tsv` has wall, user and system
+  seconds, peak RSS in KB, and the size and file count of the output.
+- **Part 1 correctness check:** after the timed runs, each tool runs once more,
+  untimed, at its largest thread count. `workflows/single/agreement.py`
+  compares the outputs base by base on chr22, for every pair of tools.
+  `d4tools create` gets the other tools' read filters (`-q 0 -F '~1796'`); for
+  RNA it also gets `--sparse`, as in the D4 paper. It still counts deletions,
+  and on RNA the spliced-out introns, so it differs from the others there.
 - **Part 2 builds:** `workflows/create/timed_trials.py` times the whole
   `snakemake build` call (plus `sync`), one trial, with every CRAM and `.crai`
   of the cohort dropped from the page cache first. Wall time includes
   Snakemake's start-up. Peak RSS is summed over the process tree and sampled.
 - **Part 2 scans:** `timed_trials.py` too, with a cold cache before every trial
-  (`scan_trials` trials). The scans run on build 1 only, one at a time.
+  (`scan_trials` trials), one scan at a time.
 - **D4 merge:** `d4tools merge` inside `/usr/bin/time`, in `d4.smk`. It goes to
-  `merge.tsv`. The per-sample files are dropped from the page cache before it.
+  `merge.tsv`. The per-sample files are dropped from the page cache before it:
+  D4 is the only tool that writes files in the build and reads them back.
 - **Peak disk:** computed from file sizes, not sampled. It is the output size,
   plus for D4 the size of the per-sample files that sit next to the merged
   file.
 
-### Thread counts and packing
+### Thread counts
 
 PBZ always uses all `cores` (256) in one process. D4 and BigWig run one
-mosdepth or Megadepth process per sample:
-
-- With N below `cores`, all N samples run at once, each with
-  `max(1, cores / N)` threads.
-- With N at or above `cores`, the jobs at once and the threads per job come
-  from `packing:` in `config/cohort.yaml`. Set the four numbers by hand from
-  part 1's `results/single/runs.tsv`. They are `null` in the file, and until
-  they are set, `submit_part2.sh` refuses to submit and `part2.sbatch` refuses
-  to start such a build. The jobs at once never exceed N.
-
-```yaml
-packing: {d4: {threads: null, jobs: null}, bigwig: {threads: null, jobs: null}}
-```
-
-Each Snakemake rule declares its threads, and the driver gives `snakemake`
-`--cores JOBS * THREADS` for D4 and BigWig builds, and `--cores 256` for PBZ
-builds and all scans. The PBZ import and the scans check that they really got
-256 threads. Details are in `workflows/cohort/common.smk`.
+mosdepth or Megadepth process per sample, all at once, with `cores / N` threads
+each (rounded down). From N = `cores` up, each gets 1 thread and Snakemake runs
+`cores` of them at a time. `snakemake` always gets `--cores 256`. Details are in
+`workflows/cohort/common.smk`.
 
 ### Copy to the cluster
 
@@ -223,15 +219,17 @@ rsync -av --relative workflows/lib workflows/single workflows/cohort \
     workflows/create/timed_trials.py workflows/create/bigwig_scan.py \
     workflows/create/over10_pbz.py workflows/create/over10_d4.py \
     workflows/create/proposed_api \
-    config/single.yaml config/single-smoke.yaml config/cohort.yaml \
-    config/cohort-smoke.yaml config/smoke-manifest.tsv \
+    config/single*.yaml config/smoke-manifest.tsv \
+    config/cohort*.yaml \
     redwood:/scratch/ucgd/lustre-labs/vollger/users/cade/pbzarr-benchmarking/
 ```
 
 ### Dry runs
 
-Check a workflow on a login node. Part 1 expects 153 `run_*` jobs (3 with
-`config/single-smoke.yaml`):
+Check a workflow on a login node. A new part 1 config expects 48 `run_*` jobs
+(4 tools, 4 thread counts, 3 repeats; 4 with `config/single-smoke.yaml`), 4
+`check_*` jobs and 1 `agreement` job. Finished runs are left out, so a config
+that already ran shows only the runs still to do:
 
 ```sh
 export PATH=$PWD/.pixi/envs/default/bin:$PATH
@@ -244,78 +242,72 @@ per line) and `/tmp/ref.fa` is any placeholder file. Use `pbz`, `d4` or `bigwig`
 for `<tool>`:
 
 ```sh
-snakemake -s workflows/cohort/<tool>.smk build scans --configfile config/cohort-smoke.yaml \
-    --config n_samples=4 samples_file=/tmp/samples.txt results=/tmp/r build=1 \
+snakemake -s workflows/cohort/<tool>.smk build scans --configfile config/cohort-ont.yaml \
+    --config n_samples=4 samples_file=/tmp/samples.txt results=/tmp/r \
     threads_per_job=64 reference_local=/tmp/ref.fa --directory /tmp/<tool>-dry \
     --cores 256 --resources bench=1 -n --printshellcmds
 ```
 
-### Smoke tests
+### Part 1 smoke test
 
-Each needs rw244 to itself, so make sure no other job runs there first. They use
-four chr22-only CRAMs in `smoke-crams/` (listed in `config/smoke-manifest.tsv`).
-Part 1 takes about 1 minute and part 2 about 2 minutes. Submit again after a smoke
-run and nothing is redone: part 1 skips finished runs and part 2 prints
-`already done`.
+It needs rw244 to itself, so make sure no other job runs there first. It uses
+four chr22-only CRAMs in `smoke-crams/` (listed in `config/smoke-manifest.tsv`)
+and takes a few minutes. Submit again after a smoke run and only the check is redone.
 
 ```sh
-CONFIG=config/single-smoke.yaml sbatch --output=results/single-smoke/logs/part1-%j.log \
-    workflows/single/part1.sbatch
-CONFIG=config/cohort-smoke.yaml bash workflows/cohort/submit_part2.sh
+sbatch workflows/single/part1.sbatch config/single-smoke.yaml
 ```
-
-The part 2 smoke test submits one job: N = 4, build 1.
 
 ### Real runs
 
-1. Part 1: `sbatch workflows/single/part1.sbatch`. If the job dies, submit it
-   again: runs that already have a result file are skipped.
-2. Fill in `packing:` in `config/cohort.yaml` from `results/single/runs.tsv`,
-   and copy the file to the cluster.
-3. Part 2: `bash workflows/cohort/submit_part2.sh` submits every cohort build as
-   its own job, one after another: N = 32, 64, 128, 256, 512, 1024, then builds
-   2 and 3 at N = 256. A job that died starts over when submitted again; a job
-   with a `DONE` file exits. Each job may run 3 days. Each tool's scans stop after
-   `scan_timeout_hours` (16 in `config/cohort.yaml`); if they fail or time out, the
-   job writes `scans-failed-<tool>` and goes on, so the build rows survive.
+1. Part 1: `sbatch workflows/single/part1.sbatch CONFIG`, once for each of
+   `config/single.yaml`, `config/single-ont.yaml` and `config/single-rna.yaml`.
+   If a job dies, submit it again: runs that already have a result file are
+   skipped.
+2. Part 2: `workflows/cohort/submit_part2.sh CONFIG` submits one job for each
+   of the config's `sample_counts`. Each job may run 3 days. A job stops at once
+   if its results folder exists: delete the folder of a job that died, then
+   submit again. Each tool's scans stop after 16 hours; if they fail or time
+   out, the job notes it in `failed.txt` and goes on, so the build rows survive.
 
 ### Where results land
 
-Part 1, under `results/single/` (`results/single-smoke/` for the smoke test):
+Part 1, under each config's `results` folder (`results/single/`,
+`results/single-ont/`, `results/single-rna/`, `results/single-smoke/`). The job
+logs go to `results/logs/part1-<job id>.log`.
 
-- `runs.tsv`: one row per run (tool, sample, threads, repeat, CRAM bytes, wall,
-  user and system seconds, peak RSS KB, output bytes and files).
+- `runs.tsv`: one row per run (tool, sample, threads, repeat, input bytes, wall,
+  user and system seconds, peak RSS KB, output bytes and files). The input
+  bytes column is called `cram_bytes` for every data type, BAM input included,
+  so the tables line up.
 - `runs/<tool>/<sample>/t<threads>/r<repeat>.tsv`: the one-row file for each
   run, which `runs.tsv` joins.
-- `samples.tsv`: the samples picked, by CRAM size.
-- `context.txt` and `logs/`. `context.txt` is appended to: each job adds a block
-  with a `start:` line (host, job id, pbz commit, `pbz --version`, the sha256 of
-  the pbz binary and of `codecs.json`, `ulimit -n` and `-u` as the job sees them,
-  tool and Python package versions, `lscpu`) and an `end:` line with the exit
-  status.
+- `samples.tsv`: the samples picked, by alignment file size.
+- `agreement/<sample>.tsv`: the correctness check, one row per pair of tools:
+  chr22 bases covered by either tool, how many of them differ, the percentage,
+  and the largest difference. The files of all data types stack into one table.
+- `context.txt`: each job adds its start time, host, job id, pbz version and
+  commit, and tool versions. The jobs before 2026-10-27 wrote more lines.
 - `config.yaml`: a copy of the config file used. If the file changes before a
   later submit, the older copy is kept as `config.yaml.~1~`.
 
-Part 2, one folder for each job, `results/cohort/n<N>/b<build>/`:
+Part 2, one folder for each job, `<results>/n<N>/` (the runs before
+2026-10-26 used `n<N>/b<build>/`):
 
-- `builds.tsv`: one row per tool, in build order. It has the threads per job
-  and jobs at once, bytes read, wall seconds, CPU seconds, peak RSS in MiB,
-  MiB read from storage (`io_in`), output bytes and files, and peak disk bytes.
-- `merge.tsv`: the D4 merge, one row.
-- `d4_per_sample_bytes.txt`: total bytes of the per-sample D4 files, which
-  `builds.tsv` adds to the merged file for D4's peak disk bytes.
-- `scans/<tool>.<analysis>.tsv`: the timing tables of the scans (build 1 only).
-- `scans-failed-<tool>`: only if that tool's scans failed or timed out. It has
-  the exit code (124 is a timeout) and a timestamp. The build rows are still
-  valid; that tool's scan tables may be missing.
+- `builds.tsv`: one row per tool, in build order: threads per job, bytes read,
+  wall seconds, peak RSS in MiB, MiB read from storage (`io_in`), CPU seconds,
+  and output bytes and files.
+- `merge.tsv`: the D4 merge, one row. `per_sample_bytes` is the size of the
+  per-sample D4 files; D4's peak disk is that plus the merged file.
+- `scans/<tool>.<analysis>.tsv`: the timing tables of the scans.
+- `failed.txt`: only if a tool's scans failed or timed out (exit status 124).
+  The build rows are still valid; that tool's scan tables may be missing.
 - `timing/build-<tool>.tsv`: the raw `timed_trials.py` row of each build.
-- `order.txt` (tool order), `samples.txt`, `context.txt` (appended to, as for
-  part 1, with `start:` and `end:` lines), `config.yaml` (a copy of the config
-  file used), `logs/` and `DONE`.
+- `samples.txt`, `context.txt` (start time, host, job id, pbz version and
+  commit, tool versions), `config.yaml` (a copy of the config file used),
+  `logs/` and `DONE` (the end time).
 
-The analysis must read only folders that have `DONE`. A job that died leaves a
-folder without it, with partial rows, until the job is submitted again (which
-starts over).
+The analysis must read only folders that have `DONE`.
 
 ### Notes for the methods
 

@@ -43,8 +43,8 @@ TOOLS = ["pbz", "mosdepth", "d4tools", "megadepth"]
 # The contig the correctness check compares base by base. Every reference has it.
 CHECK_CONTIG = "chr22"
 # The scans use the cohort benchmark's timer and BigWig script, in place.
-TIMED_TRIALS = str(ROOT / "workflows/create/timed_trials.py")
-BIGWIG_SCAN = str(ROOT / "workflows/create/bigwig_scan.py")
+TIMED_TRIALS = str(ROOT / "workflows/lib/timed_trials.py")
+BIGWIG_SCAN = str(ROOT / "workflows/lib/bigwig_scan.py")
 CHROM_SIZES = from_root(config["chrom_sizes"])
 REGIONS_BED = from_root(config["regions_bed"])
 SCAN_TRIALS = config["scan_trials"]

@@ -5,8 +5,6 @@
 
 include: "common.smk"
 
-PROPOSED_API = CREATE / "proposed_api"
-OVER10_PBZ = str(CREATE / "over10_pbz.py")
 
 
 rule build:
@@ -16,7 +14,7 @@ rule build:
 
 rule scans:
     input:
-        expand(RESULTS + "/scans/pbz.{analysis}.tsv", analysis=["full_scan", "region_scan", "over10"])
+        expand(RESULTS + "/scans/pbz.{analysis}.tsv", analysis=["full_scan", "region_scan"])
 
 
 # The sources go in a file because 1024 alignment paths as arguments would nearly
@@ -54,12 +52,10 @@ rule import:
         """
 
 
-# The scans below run the rules pbz_stat and pbz_over10 of
-# workflows/create/analysis.smk through the same timed_trials.py, with the same
-# scripts, used in place. What differs: the data is in the working directory,
-# threads are CORES, the cache is always cold, and trials come from the config.
+# The scans below are timed by timed_trials.py, with the cache always cold, threads
+# = CORES and trials from the config.
 #
-# Everything a scan writes (stat tables, over10 outputs, logs) goes in the working
+# Everything a scan writes (stat tables, logs) goes in the working
 # directory on local disk. Only the timing table goes to
 # {results}/scans/pbz.{analysis}.tsv, written by timed_trials.py after the last
 # trial, so no Lustre write lands inside a timed scan. Scans run one at a time
@@ -89,39 +85,4 @@ rule pbz_stat:
             --trials {params.trials} --output {output.bench:q} -- \
             {params.pbz:q} stat {input.store:q} depth \
             -s mean -t {threads} -r {input.regions:q} -o {output.tsv:q} 2> {log:q}
-        """
-
-
-# Per-base fraction of samples with depth >= 10x (gnomAD's over_10), written as a
-# PBZ store by a plain script that uses a dask cluster (pbzarr is dask-backed).
-# --before removes the previous trial's output outside the timed window.
-rule pbz_over10:
-    input:
-        store=PBZ_STORE,
-        script=OVER10_PBZ,
-        shim=str(PROPOSED_API / "pbzarr/__init__.py"),
-        cluster=str(PROPOSED_API / "pbzarr/cluster.py"),
-        timer=TIMED_TRIALS
-    output:
-        out=directory("scan/pbz.over10.pbz"),
-        bench=RESULTS + "/scans/pbz.over10.tsv"
-    threads: CORES
-    resources:
-        bench=1
-    params:
-        python=PYTHON,
-        trials=TRIALS,
-        proposed_api=str(PROPOSED_API)
-    log:
-        "logs/pbz.over10.log"
-    shell:
-        """
-        # over10_pbz.py imports the proposed-API shim as pbzarr. The malloc tunables let
-        # glibc reuse freed chunk buffers instead of mmapping fresh pages for each one.
-        PYTHONPATH={params.proposed_api:q} \
-        GLIBC_TUNABLES=glibc.malloc.mmap_threshold=33554432:glibc.malloc.trim_threshold=17179869184 \
-        {params.python:q} {input.timer:q} --data {input.store:q} --cache cold \
-            --trials {params.trials} --output {output.bench:q} --before 'rm -rf {output.out}' -- \
-            {params.python:q} {input.script:q} {input.store:q} {output.out:q} {threads} \
-            2> {log:q}
         """

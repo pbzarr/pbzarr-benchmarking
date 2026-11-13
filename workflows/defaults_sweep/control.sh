@@ -12,7 +12,7 @@ PY=$B/.pixi/envs/default/bin/python
 PY8=$S/pbzarr/.pixi/envs/default/bin/python
 PBZ=$S/bin/pbz
 RB=$HOME/.cargo/bin/zarrs_benchmark_read_sync
-TIMED=$B/workflows/create/timed_trials.py
+TIMED=$B/workflows/lib/timed_trials.py
 RUN=${RUN:?}; W=${WORK:?}; OUT=$RUN/results; L=$RUN/lustre
 TRIALS=3; LOCAL_TRIALS=2; THREADS=32
 NAME=ref-today

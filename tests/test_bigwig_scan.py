@@ -16,7 +16,7 @@ import pyBigWig
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCANNER = ROOT / "workflows/create/bigwig_scan.py"
+SCANNER = ROOT / "workflows/lib/bigwig_scan.py"
 
 
 class BigWigScanTest(unittest.TestCase):

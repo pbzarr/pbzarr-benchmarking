@@ -10,8 +10,6 @@ wildcard_constraints:
     sample="[^/]+"
 
 EVICT = str(ROOT / "workflows/lib/evict.py")
-# The cohort copy of workflows/create/over10_d4.py: window and dictionary sized to N.
-OVER10_D4 = str(ROOT / "workflows/cohort/over10_d4.py")
 PER_SAMPLE = [f"tmp/{sample}.per-base.d4" for sample in SAMPLES]
 
 
@@ -22,7 +20,7 @@ rule build:
 
 rule scans:
     input:
-        expand(RESULTS + "/scans/d4.{analysis}.tsv", analysis=["full_scan", "region_scan", "over10"])
+        expand(RESULTS + "/scans/d4.{analysis}.tsv", analysis=["full_scan", "region_scan"])
 
 
 # Each job declares threads_per_job threads. Each sample is declared as an
@@ -72,13 +70,10 @@ rule merge:
         """
 
 
-# The scans below run the rules d4_stat and d4_over10 of
-# workflows/create/analysis.smk through the same timed_trials.py. The over10
-# script is the cohort copy (workflows/cohort/over10_d4.py, sized to N). What
-# differs: the data is in the working directory, threads are CORES, the cache is
-# always cold, and trials come from the config.
+# The scans below are timed by timed_trials.py, with the cache always cold, threads
+# = CORES and trials from the config.
 #
-# Everything a scan writes (stat tables, over10 outputs, logs) goes in the working
+# Everything a scan writes (stat tables, logs) goes in the working
 # directory on local disk. Only the timing table goes to
 # {results}/scans/d4.{analysis}.tsv, written by timed_trials.py after the last
 # trial, so no Lustre write lands inside a timed scan. Scans run one at a time
@@ -109,38 +104,5 @@ rule d4_stat:
         {params.python:q} {input.timer:q} --data {input.d4:q} --cache cold \
             --trials {params.trials} --output {output.bench:q} -- \
             sh -c 'd4tools stat {params.scan_flag} -s mean -H -t {threads} -r {input.regions} {input.d4} > {output.tsv}' \
-            2> {log:q}
-        """
-
-
-# Per-base fraction of samples with depth >= 10x (gnomAD's over_10), written as a
-# D4 file by a plain script that uses a multiprocessing pool.
-# --before removes the previous trial's output outside the timed window.
-rule d4_over10:
-    input:
-        d4=D4_FILE,
-        script=OVER10_D4,
-        timer=TIMED_TRIALS
-    output:
-        out="scan/d4.over10.d4",
-        bench=RESULTS + "/scans/d4.over10.tsv"
-    threads: CORES
-    resources:
-        bench=1
-    params:
-        python=PYTHON,
-        trials=TRIALS
-    log:
-        "logs/d4.over10.log"
-    shell:
-        """
-        # The script runs {threads} worker processes. pyd4 also starts a pool as
-        # large as the node (512 threads) in each one, and 256 of them hit the
-        # per-user thread limit and hang. One thread each leaves the parallelism
-        # to the worker processes.
-        RAYON_NUM_THREADS=1 \
-        {params.python:q} {input.timer:q} --data {input.d4:q} --cache cold \
-            --trials {params.trials} --output {output.bench:q} --before 'rm -rf {output.out}' -- \
-            {params.python:q} {input.script:q} {input.d4:q} {output.out:q} {threads} \
             2> {log:q}
         """

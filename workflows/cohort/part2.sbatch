@@ -87,7 +87,7 @@ for tool in $(yq '.tools[]' "$CONFIG"); do
 
     # The build: one timed run. The time includes the `sync` that flushes the
     # output to disk.
-    python workflows/create/timed_trials.py --cache cold --trials 1 \
+    python workflows/lib/timed_trials.py --cache cold --trials 1 \
         --output "$OUT/timing/build-$tool.tsv" "${cold[@]}" \
         -- sh -c 'snakemake build "$@" && sync' sh "${args[@]}"
 

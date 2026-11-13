@@ -8,8 +8,7 @@ include: "common.smk"
 wildcard_constraints:
     sample="[^/]+"
 
-BIGWIG_SCAN = str(CREATE / "bigwig_scan.py")
-OVER10_BIGWIG = str(CREATE / "over10_bigwig.py")
+BIGWIG_SCAN = str(LIB / "bigwig_scan.py")
 
 
 rule build:
@@ -19,7 +18,7 @@ rule build:
 
 rule scans:
     input:
-        expand(RESULTS + "/scans/bigwig.{analysis}.tsv", analysis=["full_scan", "region_scan", "over10"])
+        expand(RESULTS + "/scans/bigwig.{analysis}.tsv", analysis=["full_scan", "region_scan"])
 
 
 # Each job declares threads_per_job threads. Each sample is declared as an
@@ -42,11 +41,8 @@ rule megadepth:
         """
 
 
-# The scans below run the rules bigwig_stat and bigwig_over10 of
-# workflows/create/analysis.smk through the same timed_trials.py, with the same
-# scripts, used in place. What
-# differs: the data is in the working directory, threads are CORES, the cache is
-# always cold, and trials come from the config.
+# The scans below are timed by timed_trials.py, with the cache always cold, threads
+# = CORES and trials from the config.
 #
 # Everything a scan writes (per-sample tables, logs) goes in the working directory
 # on local disk. Only the timing table goes to
@@ -96,34 +92,4 @@ rule bigwig_stat:
         {params.python:q} {input.timer:q} --data data --cache cold \
             --trials {params.trials} --output {output.bench:q} -- \
             xargs -a {input.commands:q} -d '\n' -n 1 -P {threads} sh -c 2> {log:q}
-        """
-
-
-# Per-base fraction of samples with depth >= 10x (gnomAD's over_10), written as a
-# bigWig by a plain script that uses a multiprocessing pool. Each worker reads one
-# 1 Mb window from every sample's bigWig in turn, so its memory does not grow
-# with N. The sample paths go on the command line (about 20 KB at N = 1024).
-# --before removes the previous trial's output outside the timed window.
-rule bigwig_over10:
-    input:
-        bigwigs=BIGWIGS,
-        script=OVER10_BIGWIG,
-        timer=TIMED_TRIALS
-    output:
-        out="scan/bigwig.over10.bw",
-        bench=RESULTS + "/scans/bigwig.over10.tsv"
-    threads: CORES
-    resources:
-        bench=1
-    params:
-        python=PYTHON,
-        trials=TRIALS
-    log:
-        "logs/bigwig.over10.log"
-    shell:
-        """
-        {params.python:q} {input.timer:q} --data data --cache cold \
-            --trials {params.trials} --output {output.bench:q} --before 'rm -rf {output.out}' -- \
-            {params.python:q} {input.script:q} {output.out:q} {threads} {input.bigwigs:q} \
-            2> {log:q}
         """

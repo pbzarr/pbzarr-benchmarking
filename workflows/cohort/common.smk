@@ -72,11 +72,10 @@ D4_FILE = "data/cohort.d4"
 BIGWIGS = [f"data/{sample}.bw" for sample in SAMPLES]
 
 
-# What the scans in all three workflows use. timed_trials.py is the same timing
-# tool the creation benchmark in workflows/create uses; the scan scripts are in
-# the same folder and are used in place.
-CREATE = ROOT / "workflows/create"
-TIMED_TRIALS = str(CREATE / "timed_trials.py")
+# What the scans in all three workflows use: the timing tool and the bigWig scan
+# script, shared with the single-sample workflow.
+LIB = ROOT / "workflows/lib"
+TIMED_TRIALS = str(LIB / "timed_trials.py")
 PYTHON = sys.executable
 REGIONS_BED = CFG["regions_bed"]
 TRIALS = int(CFG["scan_trials"])

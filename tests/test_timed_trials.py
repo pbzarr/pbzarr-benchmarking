@@ -10,7 +10,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TIMER = ROOT / "workflows/create/timed_trials.py"
+TIMER = ROOT / "workflows/lib/timed_trials.py"
 
 
 def run_timer(*args):

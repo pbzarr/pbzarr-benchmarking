@@ -8,8 +8,8 @@ alignment: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-rna-ont/data/sorted_a
 index: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-rna-ont/data/sorted_alignment_{sample}.bam.bai
 reference: null
 d4tools_options: --sparse
-pbz: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr/target/release/pbz
-pbz_repo: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr
+pbz: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr-0.6.0/target/release/pbz
+pbz_repo: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr-0.6.0
 # n1codecs.json: the 1D single-sample codec (pcodec 8, 1,048,576 shards of 16,384 chunks)
 codecs: n1codecs.json
 results: results/single-rna
@@ -17,3 +17,7 @@ first_n: 60
 quantiles: [0.5]
 repeats: 3
 threads: {pbz: [1, 4, 16, 64], mosdepth: [1, 4, 16, 64], d4tools: [1, 4, 16, 64], megadepth: [1, 4, 16, 64]}
+# The scans: the cohort benchmark's region lists, three cold trials each.
+chrom_sizes: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-rna-ont/hg19.chrom.sizes
+regions_bed: hg19_random.bed
+scan_trials: 3

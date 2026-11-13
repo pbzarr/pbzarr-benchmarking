@@ -1,6 +1,8 @@
 # Part 1: time creating one depth track from one alignment file (CRAM or BAM),
 # for PBZ, mosdepth (D4), d4tools create (D4) and Megadepth (BigWig), at several
-# thread counts. Then check where the tools' depths agree. Run it with part1.sbatch.
+# thread counts. Then check where the tools' depths agree, and time the two scans
+# of the cohort benchmark (full scan, region scan) on each tool's output. Run it
+# with part1.sbatch.
 #
 # Each run is one timed command. Runs go one at a time (--resources bench=1).
 # Data goes under the working directory (the job's local $TMPDIR) and is deleted
@@ -40,6 +42,16 @@ REPEATS = range(1, config["repeats"] + 1)
 TOOLS = ["pbz", "mosdepth", "d4tools", "megadepth"]
 # The contig the correctness check compares base by base. Every reference has it.
 CHECK_CONTIG = "chr22"
+# The scans use the cohort benchmark's timer and BigWig script, in place.
+TIMED_TRIALS = str(ROOT / "workflows/create/timed_trials.py")
+BIGWIG_SCAN = str(ROOT / "workflows/create/bigwig_scan.py")
+CHROM_SIZES = from_root(config["chrom_sizes"])
+REGIONS_BED = from_root(config["regions_bed"])
+SCAN_TRIALS = config["scan_trials"]
+ANALYSES = ["full_scan", "region_scan"]
+# Each tool's output is scanned at that tool's thread counts. bigwig_scan.py
+# uses that many processes (its --threads).
+SCAN_THREADS = THREADS
 
 # Every timed command must really get its thread count.
 if workflow.cores < max(max(counts) for counts in THREADS.values()):
@@ -90,16 +102,30 @@ ROWS = [
 # copy of the reference would make Snakemake redo it.
 TODO = [row for row in ROWS if not os.path.exists(row)]
 
+# One timing file per scan: tool, sample, threads, analysis. Finished scans are
+# left out the same way.
+SCANS = [
+    f"{RESULTS}/scans/{tool}/{sample}/t{threads}/{analysis}.tsv"
+    for tool in TOOLS
+    for sample in CRAM_BYTES
+    for threads in SCAN_THREADS[tool]
+    for analysis in ANALYSES
+]
+SCANS_TODO = [scan for scan in SCANS if not os.path.exists(scan)]
+
 wildcard_constraints:
     sample="[^/]+",
     threads=r"\d+",
     repeat=r"\d+",
+    analysis="full_scan|region_scan",
+    d4tool="mosdepth|d4tools",
 
 
 rule all:
     input:
         RESULTS + "/runs.tsv",
         RESULTS + "/samples.tsv",
+        RESULTS + "/scans.tsv",
         expand(RESULTS + "/agreement/{sample}.tsv", sample=CRAM_BYTES),
 
 
@@ -381,3 +407,109 @@ rule agreement:
     shell:
         "python {input.script} {DATA_TYPE} {wildcards.sample} {CHECK_CONTIG} {output}"
         " pbz={input.pbz} mosdepth={input.mosdepth} d4tools={input.d4tools} megadepth={input.megadepth}"
+
+
+# The scans: the same commands as the cohort benchmark's (workflows/cohort), on
+# the one-sample outputs of the check runs above. timed_trials.py drops the
+# output from the page cache before each of SCAN_TRIALS trials. What a scan
+# writes stays in the working directory; only the timing file goes to the
+# results folder.
+
+# The whole-genome region list for the full scans: every contig, 0 to its length.
+rule full_scan_bed:
+    input:
+        CHROM_SIZES
+    output:
+        "full_scan.bed"
+    shell:
+        r"""awk 'BEGIN {{OFS="\t"}} $2 > 0 {{print $1, 0, $2}}' {input:q} > {output:q}"""
+
+
+rule scan_pbz:
+    input:
+        store="check/{sample}/pbz.pbz",
+        regions=lambda wc: "full_scan.bed" if wc.analysis == "full_scan" else REGIONS_BED,
+        timer=TIMED_TRIALS
+    output:
+        RESULTS + "/scans/pbz/{sample}/t{threads}/{analysis}.tsv"
+    threads: lambda wildcards: int(wildcards.threads)
+    resources:
+        bench=1
+    params:
+        pbz=PBZ,
+        trials=SCAN_TRIALS,
+        out="scan/pbz.{sample}.t{threads}.{analysis}.tsv"
+    shell:
+        """
+        mkdir -p scan
+        python {input.timer:q} --data {input.store:q} --cache cold --trials {params.trials} --output {output:q} -- \
+            {params.pbz:q} stat {input.store:q} depth -s mean -t {wildcards.threads} -r {input.regions:q} -o {params.out:q}
+        """
+
+
+# mosdepth's and d4tools create's D4 files. --no-index for the full scan, as in
+# the cohort benchmark, so d4tools reads the depths and not the index summaries.
+rule scan_d4:
+    input:
+        d4=lambda wc: f"check/{wc.sample}/" + ("mosdepth.per-base.d4" if wc.d4tool == "mosdepth" else "d4tools.d4"),
+        regions=lambda wc: "full_scan.bed" if wc.analysis == "full_scan" else REGIONS_BED,
+        timer=TIMED_TRIALS
+    output:
+        RESULTS + "/scans/{d4tool}/{sample}/t{threads}/{analysis}.tsv"
+    threads: lambda wildcards: int(wildcards.threads)
+    resources:
+        bench=1
+    params:
+        trials=SCAN_TRIALS,
+        scan_flag=lambda wc: "--no-index" if wc.analysis == "full_scan" else "",
+        out="scan/{d4tool}.{sample}.t{threads}.{analysis}.tsv"
+    shell:
+        """
+        mkdir -p scan
+        python {input.timer:q} --data {input.d4:q} --cache cold --trials {params.trials} --output {output:q} -- \
+            sh -c 'd4tools stat {params.scan_flag} -s mean -H -t {wildcards.threads} -r {input.regions} {input.d4} > {params.out}'
+        """
+
+
+# The full scan reads whole chromosomes from the file's header, so it gets no BED.
+rule scan_bigwig:
+    input:
+        bigwig="check/{sample}/megadepth.all.bw",
+        regions=lambda wc: [] if wc.analysis == "full_scan" else [REGIONS_BED],
+        scanner=BIGWIG_SCAN,
+        timer=TIMED_TRIALS
+    output:
+        RESULTS + "/scans/megadepth/{sample}/t{threads}/{analysis}.tsv"
+    threads: lambda wildcards: int(wildcards.threads)
+    resources:
+        bench=1
+    params:
+        trials=SCAN_TRIALS,
+        out="scan/megadepth.{sample}.t{threads}.{analysis}.tsv"
+    shell:
+        """
+        mkdir -p scan
+        python {input.timer:q} --data {input.bigwig:q} --cache cold --trials {params.trials} --output {output:q} -- \
+            sh -c 'python {input.scanner} -t {wildcards.threads} {input.bigwig} {input.regions} > {params.out}'
+        """
+
+
+# All scan timing files in one table, with the tool, sample, thread count and
+# scan in front of each trial row.
+rule collect_scans:
+    input:
+        SCANS_TODO
+    output:
+        RESULTS + "/scans.tsv"
+    params:
+        scans=SCANS
+    run:
+        with open(output[0], "w") as out:
+            for number, path in enumerate(params.scans):
+                tool, sample, threads, analysis = Path(path).with_suffix("").parts[-4:]
+                with open(path) as handle:
+                    header, *rows = handle.read().splitlines()
+                if number == 0:
+                    out.write("tool\tsample\tthreads\tanalysis\t" + header + "\n")
+                for row in rows:
+                    out.write(f"{tool}\t{sample}\t{threads[1:]}\t{analysis}\t{row}\n")

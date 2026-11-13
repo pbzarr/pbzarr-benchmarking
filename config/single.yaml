@@ -4,8 +4,8 @@ manifest: config/1kg-sr.tsv
 alignment: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-high-coverage/crams/{sample}.final.cram
 index: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-high-coverage/crams/{sample}.final.cram.crai
 reference: /scratch/ucgd/lustre-labs/vollger/assemblies/GRCh38_full_analysis_set_plus_decoy_hla.fa
-pbz: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr/target/release/pbz
-pbz_repo: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr
+pbz: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr-0.6.0/target/release/pbz
+pbz_repo: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr-0.6.0
 # n1codecs.json: the 1D single-sample codec (pcodec 8, 1,048,576 shards of 16,384 chunks)
 codecs: n1codecs.json
 results: results/single
@@ -13,3 +13,7 @@ first_n: 1024
 quantiles: [0.5]
 repeats: 3
 threads: {pbz: [1, 4, 16, 64], mosdepth: [1, 4, 16, 64], d4tools: [1, 4, 16, 64], megadepth: [1, 4, 16, 64]}
+# The scans: the cohort benchmark's region lists, three cold trials each.
+chrom_sizes: /scratch/ucgd/lustre-labs/vollger/assemblies/GRCh38_full_analysis_set_plus_decoy_hla.chrom.sizes
+regions_bed: random.bed
+scan_trials: 3

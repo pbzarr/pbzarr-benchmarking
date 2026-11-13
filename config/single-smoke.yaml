@@ -4,8 +4,8 @@ manifest: config/smoke-manifest.tsv
 alignment: /scratch/ucgd/lustre-labs/vollger/users/cade/pbzarr-benchmarking/smoke-crams/{sample}.final.cram
 index: /scratch/ucgd/lustre-labs/vollger/users/cade/pbzarr-benchmarking/smoke-crams/{sample}.final.cram.crai
 reference: /scratch/ucgd/lustre-labs/vollger/assemblies/GRCh38_full_analysis_set_plus_decoy_hla.fa
-pbz: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr/target/release/pbz
-pbz_repo: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr
+pbz: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr-0.6.0/target/release/pbz
+pbz_repo: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr-0.6.0
 # n1codecs.json: the 1D single-sample codec (pcodec 8, 1,048,576 shards of 16,384 chunks)
 codecs: n1codecs.json
 results: results/single-smoke
@@ -13,3 +13,7 @@ first_n: 4
 quantiles: [0.5]
 repeats: 1
 threads: {pbz: [64], mosdepth: [4], d4tools: [4], megadepth: [4]}
+# The scans: the cohort benchmark's region lists, one cold trial each.
+chrom_sizes: /scratch/ucgd/lustre-labs/vollger/assemblies/GRCh38_full_analysis_set_plus_decoy_hla.chrom.sizes
+regions_bed: random.bed
+scan_trials: 1

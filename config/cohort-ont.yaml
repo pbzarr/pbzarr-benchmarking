@@ -11,8 +11,8 @@ index: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-ont/hg38/{sample}.hg38.cr
 reference: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-ont/reference/1KG_ONT_VIENNA_hg38.fa
 chrom_sizes: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-ont/reference/1KG_ONT_VIENNA_hg38.chrom.sizes
 regions_bed: rna_random.bed
-pbz: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr/target/release/pbz
-pbz_repo: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr
+pbz: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr-0.6.0/target/release/pbz
+pbz_repo: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr-0.6.0
 codecs: codecs.json
 cores: 256
 results: results/cohort-ont

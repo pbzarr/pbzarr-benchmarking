@@ -6,8 +6,8 @@ index: /scratch/ucgd/lustre-labs/vollger/data-sets/1kg-high-coverage/crams/{samp
 reference: /scratch/ucgd/lustre-labs/vollger/assemblies/GRCh38_full_analysis_set_plus_decoy_hla.fa
 chrom_sizes: /scratch/ucgd/lustre-labs/vollger/assemblies/GRCh38_full_analysis_set_plus_decoy_hla.chrom.sizes
 regions_bed: random.bed
-pbz: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr/target/release/pbz
-pbz_repo: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr
+pbz: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr-0.6.0/target/release/pbz
+pbz_repo: /uufs/chpc.utah.edu/common/HIPAA/u1364833/pbzarr-0.6.0
 codecs: codecs.json
 cores: 256
 results: results/cohort-pbz

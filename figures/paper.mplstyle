@@ -12,3 +12,4 @@ axes.spines.top: False
 axes.spines.right: False
 svg.fonttype: none
 savefig.dpi: 300
+pdf.fonttype: 42

@@ -1,4 +1,4 @@
-"""Figure S3: wall time and peak memory of building the largest cohort of each data type."""
+"""Figure S1: wall time, CPU time and peak memory of building the largest cohort of each data type."""
 
 from pathlib import Path
 
@@ -37,17 +37,20 @@ def bars(ax, values, label):
     ax.margins(y=0.15)
 
 
-fig, axes = plt.subplots(2, 3, figsize=(180 / 25.4, 3.8), layout="constrained")
+fig, axes = plt.subplots(3, 3, figsize=(180 / 25.4, 5.6), layout="constrained")
 for column, (dataset, builds) in enumerate(DATASETS.items()):
     builds = builds.set_index("tool").loc[list(TOOLS)]
     bars(axes[0, column], builds.wall_s / 60, "Wall time (min)")
-    bars(axes[1, column], builds.max_rss_mib * 2**20 / 1e9, "Peak memory (GB)")
+    bars(axes[1, column], builds.cpu_s / 3600, "CPU time (h)")
+    bars(axes[2, column], builds.max_rss_mib * 2**20 / 1e9, "Peak memory (GB)")
     axes[0, column].set_title(f"{dataset} (n={builds.n.iloc[0]:,})", loc="left", weight="bold")
 
-for ax, text in zip(axes[:, 0], "AB"):
+for ax, text in zip(axes[:, 0], "ABC"):
     ax.text(-0.25, 1.08, text, transform=ax.transAxes, fontsize=10, weight="bold")
 fig.legend([Patch(color=color) for _, color in TOOLS.values()], [name for name, _ in TOOLS.values()],
            loc="outside upper center", ncol=3, frameon=False)
 OUT.mkdir(exist_ok=True)
 for ext in ("svg", "png"):
-    fig.savefig(OUT / f"figureS3.{ext}")
+    fig.savefig(OUT / f"figureS1.{ext}")
+# Illustrator opens the PDF-format .ai with text kept as editable Arial.
+fig.savefig(OUT / "figureS1.ai", format="pdf")
